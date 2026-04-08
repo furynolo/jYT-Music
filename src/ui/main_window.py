@@ -957,7 +957,9 @@ class MainWindow(QMainWindow):
         menu.exec(self.local_list_widget.viewport().mapToGlobal(pos))
 
     def browse_local_folder(self):
-        default_dir = self.settings_manager.settings.get("local_music_dir", "")
+        default_dir = self.settings_manager.settings.get("download_dir", "")
+        if not default_dir:
+            default_dir = self.settings_manager.settings.get("local_music_dir", "")
         folder_path = QFileDialog.getExistingDirectory(self, "Select Music Folder", default_dir)
         if folder_path:
             self.settings_manager.settings["local_music_dir"] = folder_path
@@ -1046,7 +1048,10 @@ class MainWindow(QMainWindow):
             self.sidebar_widget.hide()
             self.stacked_widget.setCurrentIndex(1)
             if not self.local_files:
-                saved_dir = self.settings_manager.settings.get("local_music_dir", "")
+                saved_dir = self.settings_manager.settings.get("download_dir", "")
+                if not saved_dir:
+                    saved_dir = self.settings_manager.settings.get("local_music_dir", "")
+                
                 if saved_dir:
                     self.scan_and_load_local(saved_dir)
 
