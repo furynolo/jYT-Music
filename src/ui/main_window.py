@@ -94,7 +94,11 @@ class MainWindow(QMainWindow):
         # Added Search Controls to Top Bar
         top_bar_layout.addSpacing(15)
         
-        self.browse_btn = QPushButton("📁 Browse ")
+        self.browse_btn = QPushButton("📁 Browse")
+        self.browse_btn.setStyleSheet("""
+            QPushButton { background-color: #444; color: white; border-radius: 4px; padding: 5px 10px; font-weight: bold; }
+            QPushButton:hover { background-color: #555; }
+        """)
         self.browse_btn.clicked.connect(self.browse_local_folder)
         self.browse_btn.hide()
         top_bar_layout.addWidget(self.browse_btn)
@@ -107,11 +111,18 @@ class MainWindow(QMainWindow):
         top_bar_layout.addWidget(self.search_input)
         
         self.action_btn = QPushButton("Play")
+        self.action_btn.setStyleSheet("""
+            QPushButton { background-color: #444; color: white; border-radius: 4px; padding: 5px 15px; font-weight: bold; }
+            QPushButton:hover { background-color: #555; }
+        """)
         self.action_btn.clicked.connect(self.on_search_triggered)
         top_bar_layout.addWidget(self.action_btn)
         
         self.download_btn = QPushButton("⬇ Download")
-        self.download_btn.setStyleSheet("background-color: #e0a96d; color: black; font-weight: bold;")
+        self.download_btn.setStyleSheet("""
+            QPushButton { background-color: #444; color: white; border-radius: 4px; padding: 5px 10px; font-weight: bold; }
+            QPushButton:hover { background-color: #555; }
+        """)
         self.download_btn.clicked.connect(self.on_download_clicked)
         top_bar_layout.addWidget(self.download_btn)
         
@@ -546,14 +557,22 @@ class MainWindow(QMainWindow):
             self.current_cloud_url = None
             self.current_cloud_video_id = None
             
+            # Update background metadata for local files
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            logo_path = os.path.join(base_dir, "..", "assets", "logo.svg")
+            
+            self.now_playing_widget.update_track(
+                title=track.get("name", "Unknown Track"),
+                artist="Local File",
+                thumbnail_url=None, # Trigger the local default logic if needed
+                pixmap=QPixmap(logo_path)
+            )
+            
             # Sync local active state
             for i in range(self.local_list_widget.count()):
                 item = self.local_list_widget.item(i)
                 data = item.data(Qt.UserRole)
                 is_this_active = (data.get("path") == track["path"])
-                # We need to manually handle highlighting for local items since they don't use TrackItemWidget currently (just strings)
-                # Wait, I should probably use TrackItemWidget for local too for consistency.
-                # For now, let's just highlight the item if it's a standard string item.
                 if is_this_active:
                     item.setSelected(True)
                     self.local_list_widget.scrollToItem(item, QListWidget.PositionAtCenter)

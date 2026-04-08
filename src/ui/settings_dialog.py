@@ -55,7 +55,11 @@ class SettingsDialog(QDialog):
         self.dl_input.setPlaceholderText("Fallback to Local Music Dir")
         
         dl_browse_btn = QPushButton("Browse")
-        dl_browse_btn.setFixedSize(70, 24)
+        dl_browse_btn.setFixedSize(85, 28)
+        dl_browse_btn.setStyleSheet("""
+            QPushButton { background-color: #444; color: white; font-weight: bold; border-radius: 4px; }
+            QPushButton:hover { background-color: #555; }
+        """)
         dl_browse_btn.clicked.connect(self.browse_download_dir)
         
         dl_layout.addWidget(dl_label)

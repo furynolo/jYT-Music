@@ -77,7 +77,7 @@ class NowPlayingWidget(QWidget):
         main_layout.addLayout(text_layout)
         main_layout.addLayout(actions_layout)
         
-    def update_track(self, title, artist, thumbnail_url=None):
+    def update_track(self, title, artist, thumbnail_url=None, pixmap=None):
         # Truncate strings to prevent UI pushing
         title_disp = (title[:35] + '...') if len(title) > 35 else title
         artist_disp = (artist[:35] + '...') if len(artist) > 35 else artist
@@ -85,7 +85,9 @@ class NowPlayingWidget(QWidget):
         self.title_label.setText(title_disp)
         self.artist_label.setText(artist_disp)
         
-        if thumbnail_url:
+        if pixmap:
+            self.set_thumbnail(pixmap, None)
+        elif thumbnail_url:
             if self.image_worker:
                 self.image_worker.terminate()
             self.image_worker = ImageWorker(thumbnail_url)
@@ -94,5 +96,5 @@ class NowPlayingWidget(QWidget):
         else:
             self.thumbnail_label.setPixmap(QIcon().pixmap(50, 50)) # Clear
             
-    def set_thumbnail(self, pixmap, url):
+    def set_thumbnail(self, pixmap, url=None):
         self.thumbnail_label.setPixmap(pixmap.scaled(50, 50, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
