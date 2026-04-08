@@ -60,6 +60,14 @@ class MainWindow(QMainWindow):
         self.current_cloud_url = None
         self.current_cloud_video_id = None
         
+        # Recovery Logic
+        self.recovery_mode = False
+        self.recovery_retry_count = 0
+        self.recovery_timer = QTimer(self)
+        self.recovery_timer.setSingleShot(True)
+        self.recovery_timer.timeout.connect(self.attempt_recovery)
+        self.last_failure_pos = 0
+        
         self._cached_playlists = []
 
         self.init_ui()
@@ -336,6 +344,7 @@ class MainWindow(QMainWindow):
         self.audio_engine.track_finished.connect(self.on_track_finished)
         self.audio_engine.position_updated.connect(self.on_position_updated)
         self.audio_engine.duration_updated.connect(self.on_duration_updated)
+        self.audio_engine.error_occurred.connect(self.on_audio_error)
         
         self.progress_slider.sliderPressed.connect(self.on_slider_pressed)
         self.progress_slider.sliderReleased.connect(self.on_slider_released)
@@ -867,10 +876,82 @@ class MainWindow(QMainWindow):
 
     def on_download_finished(self, msg, success):
         self.download_btn.setEnabled(True)
-        color = "#1ed760" if success else "#ff5555"
-        self.flash_status(msg, color)
+        self.flash_status(msg, "#1ed760" if success else "#ff5555")
         if success and not self.is_cloud_mode:
-            self.scan_and_load_local(self.settings_manager.settings.get("local_music_dir", ""))
+            self.scan_and_load_local(self.settings_manager.settings.get("download_dir", "") or self.settings_manager.settings.get("local_music_dir", ""))
+
+    def on_audio_error(self, error_code, error_str):
+        if self.is_cloud_mode and self.current_cloud_url:
+            # We treat Demuxer failures during streaming as recoverable
+            recoverable_codes = [
+                3, # QMediaPlayer.Error.NetworkError
+                5, # QMediaPlayer.Error.ResourceError
+            ]
+            
+            # -10054 is often reported as ResourceError or NetworkError by Qt
+            print(f"Detected potential stream failure: {error_str} (Code: {error_code})")
+            
+            if error_code in recoverable_codes or "demuxing failed" in error_str.lower():
+                self.initiate_recovery()
+            else:
+                self.flash_status(f"Non-recoverable audio error: {error_str}", "#ff5555")
+
+    def initiate_recovery(self):
+        if self.recovery_mode: return
+        
+        self.recovery_mode = True
+        self.last_failure_pos = self.audio_engine.player.position()
+        self.flash_status("Streaming interrupted. Attempting to recover...", "#e0a96d")
+        
+        # Exponential backoff: 0.5s, 1s, 2s, 4s, 8s...
+        delay = int(500 * (2 ** self.recovery_retry_count))
+        # Cap at 30 seconds
+        delay = min(delay, 30000)
+        
+        print(f"Starting recovery attempt {self.recovery_retry_count + 1} in {delay}ms...")
+        self.recovery_timer.start(delay)
+
+    def attempt_recovery(self):
+        if not self.current_cloud_url:
+            self.recovery_mode = False
+            return
+            
+        self.recovery_retry_count += 1
+        
+        # Restart YT extraction
+        if self.yt_worker:
+            self.yt_worker.terminate()
+            
+        self.yt_worker = YTWorker(self.current_cloud_url, parent=self)
+        self.yt_worker.result_ready.connect(self.on_recovery_result_ready)
+        self.yt_worker.error_occurred.connect(self.on_recovery_error)
+        self.yt_worker.start()
+
+    def on_recovery_result_ready(self, track_info):
+        print("Recovery successful: fresh stream URL obtained.")
+        self.recovery_mode = False
+        self.recovery_retry_count = 0
+        
+        stream_url = track_info['stream_url']
+        self.audio_engine.player.setSource(QUrl(stream_url))
+        self.audio_engine.player.play()
+        
+        # Seek to last known position
+        if self.last_failure_pos > 0:
+            print(f"Resuming from saved position: {self.last_failure_pos}ms")
+            # Wait a tiny bit for the source to load before seeking
+            QTimer.singleShot(500, lambda: self.audio_engine.seek(self.last_failure_pos))
+            
+        self.flash_status("Playback recovered successfully!", "#1ed760")
+
+    def on_recovery_error(self, error_msg):
+        print(f"Recovery attempt failed: {error_msg}")
+        self.recovery_mode = False
+        if self.recovery_retry_count < 5: # Max 5 automated retries
+            self.initiate_recovery()
+        else:
+            self.flash_status("Recovery failed after multiple attempts.", "#ff5555")
+            self.recovery_retry_count = 0
 
     def show_now_playing_menu(self):
         if not self.current_cloud_url:
