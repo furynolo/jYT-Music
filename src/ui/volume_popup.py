@@ -35,8 +35,8 @@ class VolumePopup(QWidget):
         self.slider.setStyleSheet("""
             QSlider::groove:vertical { background: #333; width: 4px; border-radius: 2px; }
             QSlider::handle:vertical { background: white; height: 12px; margin: 0 -4px; border-radius: 6px; }
-            QSlider::sub-page:vertical { background: #1ed760; border-radius: 2px; }
-            QSlider::add-page:vertical { background: #333; border-radius: 2px; }
+            QSlider::sub-page:vertical { background: #333; border-radius: 2px; }
+            QSlider::add-page:vertical { background: #FF0000; border-radius: 2px; }
         """)
         
         self.slider.valueChanged.connect(self.on_slider_changed)
