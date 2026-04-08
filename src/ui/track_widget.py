@@ -37,6 +37,9 @@ class TrackItemWidget(QWidget):
         self.title_label = QLabel(display_title)
         self.title_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #fff;")
         
+        # Add tooltip to show full title on hover
+        self.setToolTip(raw_title)
+        
         self.type_label = QLabel(track_data.get('result_type', ''))
         self.type_label.setStyleSheet("""
             font-size: 10px; 
