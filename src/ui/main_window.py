@@ -177,6 +177,7 @@ class MainWindow(QMainWindow):
         self.cloud_content_layout.addWidget(self.cloud_status)
         
         self.cloud_list_widget = QListWidget()
+        self.cloud_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.cloud_list_widget.setStyleSheet("background-color: #121212; font-size: 14px; border: none;")
         self.cloud_list_widget.setCursor(Qt.PointingHandCursor)
         self.cloud_list_widget.itemClicked.connect(self.on_cloud_track_selected)
@@ -190,6 +191,7 @@ class MainWindow(QMainWindow):
         self.local_view_widget = QWidget()
         local_layout = QVBoxLayout(self.local_view_widget)
         self.local_list_widget = QListWidget()
+        self.local_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.local_list_widget.setStyleSheet("background-color: #121212; font-size: 14px; border: none;")
         self.local_list_widget.setCursor(Qt.PointingHandCursor)
         self.local_list_widget.itemClicked.connect(self.on_local_track_selected)

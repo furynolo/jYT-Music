@@ -10,7 +10,7 @@ class TrackItemWidget(QWidget):
         self.is_active = False
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setContentsMargins(5, 5, 20, 5)
         
         self.thumb_label = QLabel()
         self.thumb_label.setFixedSize(60, 45) # 4:3 default thumbnail approx
@@ -28,7 +28,7 @@ class TrackItemWidget(QWidget):
         self.assets_dir = os.path.join(base_dir, "..", "assets")
         
         raw_title = track_data.get('title', 'Unknown Title')
-        max_chars = 60
+        max_chars = 50
         if len(raw_title) > max_chars:
             display_title = raw_title[:max_chars - 8] + "..." + raw_title[-5:]
         else:
