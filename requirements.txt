@@ -1,0 +1,7 @@
+PySide6
+yt-dlp
+python-vlc
+pynput
+python-dotenv
+google-api-python-client
+google-auth-oauthlib
