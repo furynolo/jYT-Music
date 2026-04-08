@@ -5,14 +5,21 @@ import urllib.parse
 class YTHandler:
     def __init__(self):
         ffmpeg_dir = os.path.join(os.path.dirname(__file__), 'bin')
+        ffmpeg_exe = os.path.join(ffmpeg_dir, 'ffmpeg.exe')
+        
         self.ydl_opts = {
             'format': 'bestaudio/best',
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
-            'ffmpeg_location': ffmpeg_dir
         }
+        
+        if os.path.exists(ffmpeg_exe):
+            self.ydl_opts['ffmpeg_location'] = ffmpeg_dir
+        else:
+            # Let yt-dlp find it in the system PATH
+            pass
 
     def _is_url(self, text):
         parsed = urllib.parse.urlparse(text)

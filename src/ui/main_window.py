@@ -844,9 +844,12 @@ class MainWindow(QMainWindow):
             self.flash_status("Search or select a track first to download.", "#ff5555")
             return
             
-        output_dir = self.settings_manager.settings.get("local_music_dir", "")
+        output_dir = self.settings_manager.settings.get("download_dir", "")
         if not output_dir:
-            self.flash_status("Please set a Local Music Directory in Local Mode first!", "#ff5555")
+            output_dir = self.settings_manager.settings.get("local_music_dir", "")
+            
+        if not output_dir:
+            self.flash_status("Please set a Download Location in Settings first!", "#ff5555")
             return
 
         self.flash_status(f"Starting Download to {output_dir}...", color="#e0a96d")

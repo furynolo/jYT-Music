@@ -20,7 +20,8 @@ class SettingsManager:
                 "next_track": "<ctrl>+<shift>+<right>",
                 "prev_track": "<ctrl>+<shift>+<left>"
             },
-            "local_music_dir": ""
+            "local_music_dir": "",
+            "download_dir": ""
         }
         self.load()
 

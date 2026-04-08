@@ -11,7 +11,13 @@ A Windows-native desktop application for streaming YouTube Music and playing loc
 
 ## Prerequisites
 - **Python 3.11+**
-- **FFmpeg**: Must be installed and available in your system PATH (or placed in the `bin/` directory).
+- **FFmpeg**: The application requires FFmpeg for streaming and downloads. You have two options:
+    1. **System PATH (Recommended)**: Install FFmpeg on your system and ensure it's available in your `PATH`.
+    2. **Bundled**: Place `ffmpeg.exe` and `ffprobe.exe` directly into the `src/bin/` directory.
+
+> [!NOTE]
+> The `src/bin/` folder is listed in `.gitignore` to prevent large binaries from bloating the repository.
+
 
 ## Setup
 
