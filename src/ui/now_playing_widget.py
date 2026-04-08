@@ -46,7 +46,7 @@ class NowPlayingWidget(QWidget):
         assets_dir = os.path.join(base_dir, "..", "assets")
         
         self.like_btn = QPushButton()
-        self.like_btn.setIcon(QIcon(os.path.join(assets_dir, "thumb_up.svg")))
+        self.like_btn.setIcon(QIcon(os.path.join(assets_dir, "thumb_up_outline.svg")))
         self.like_btn.setFocusPolicy(Qt.NoFocus)
         self.like_btn.setToolTip("Like")
         self.like_btn.setFixedSize(30, 30)
@@ -54,7 +54,7 @@ class NowPlayingWidget(QWidget):
         self.like_btn.clicked.connect(lambda: self.rating_clicked.emit("like"))
         
         self.dislike_btn = QPushButton()
-        self.dislike_btn.setIcon(QIcon(os.path.join(assets_dir, "thumb_down.svg")))
+        self.dislike_btn.setIcon(QIcon(os.path.join(assets_dir, "thumb_down_outline.svg")))
         self.dislike_btn.setFocusPolicy(Qt.NoFocus)
         self.dislike_btn.setToolTip("Dislike")
         self.dislike_btn.setFixedSize(30, 30)
@@ -98,3 +98,21 @@ class NowPlayingWidget(QWidget):
             
     def set_thumbnail(self, pixmap, url=None):
         self.thumbnail_label.setPixmap(pixmap.scaled(50, 50, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
+
+    def set_rating(self, rating):
+        """
+        Swaps icons between outline and solid based on the current rating.
+        rating: 'like', 'dislike', or 'none'
+        """
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        assets_dir = os.path.join(base_dir, "..", "assets")
+        
+        if rating == "like":
+            self.like_btn.setIcon(QIcon(os.path.join(assets_dir, "thumb_up.svg"))) # Solid
+            self.dislike_btn.setIcon(QIcon(os.path.join(assets_dir, "thumb_down_outline.svg")))
+        elif rating == "dislike":
+            self.like_btn.setIcon(QIcon(os.path.join(assets_dir, "thumb_up_outline.svg")))
+            self.dislike_btn.setIcon(QIcon(os.path.join(assets_dir, "thumb_down.svg"))) # Solid
+        else: # none
+            self.like_btn.setIcon(QIcon(os.path.join(assets_dir, "thumb_up_outline.svg")))
+            self.dislike_btn.setIcon(QIcon(os.path.join(assets_dir, "thumb_down_outline.svg")))

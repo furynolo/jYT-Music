@@ -524,6 +524,7 @@ class MainWindow(QMainWindow):
                 artist=track.get("author", "Unknown Artist"),
                 thumbnail_url=track.get("thumbnail_url")
             )
+            self.now_playing_widget.set_rating("none") # Standardize for new tracks
             self.current_cloud_url = track.get("url", "")
             
             # Sync active state down to track widgets
@@ -542,9 +543,6 @@ class MainWindow(QMainWindow):
             self.yt_worker.result_ready.connect(self.on_yt_result_ready)
             self.yt_worker.error_occurred.connect(self.on_yt_error)
             self.yt_worker.start()
-            
-            self.now_playing_widget.like_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
-            self.now_playing_widget.dislike_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
             
             # Auto-fetch rating if authenticated
             if self.current_cloud_video_id and self.auth_manager.is_authenticated():
@@ -800,26 +798,13 @@ class MainWindow(QMainWindow):
         success = self.youtube_api.rate_video(self.current_cloud_video_id, rating)
         if success:
             self.flash_status(f"Rated video as: {rating}", "#1ed760")
-            if rating == "like":
-                self.now_playing_widget.like_btn.setStyleSheet("QPushButton { background-color: #1ed760; color: black; font-weight: bold; border-radius: 4px; font-size: 14px; padding: 2px; }")
-                self.now_playing_widget.dislike_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
-            elif rating == "dislike":
-                self.now_playing_widget.dislike_btn.setStyleSheet("QPushButton { background-color: #ff5555; color: white; font-weight: bold; border-radius: 4px; font-size: 14px; padding: 2px; }")
-                self.now_playing_widget.like_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
+            self.now_playing_widget.set_rating(rating)
 
     def on_rating_fetched(self, video_id, rating):
         if video_id != self.current_cloud_video_id:
             return # Stale worker
             
-        if rating == "like":
-            self.now_playing_widget.like_btn.setStyleSheet("QPushButton { background-color: #1ed760; color: black; font-weight: bold; border-radius: 4px; font-size: 14px; padding: 2px; }")
-            self.now_playing_widget.dislike_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
-        elif rating == "dislike":
-            self.now_playing_widget.dislike_btn.setStyleSheet("QPushButton { background-color: #ff5555; color: white; font-weight: bold; border-radius: 4px; font-size: 14px; padding: 2px; }")
-            self.now_playing_widget.like_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
-        else:
-            self.now_playing_widget.like_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
-            self.now_playing_widget.dislike_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
+        self.now_playing_widget.set_rating(rating)
 
     def on_yt_result_ready(self, track_info):
         self.action_btn.setEnabled(True)
