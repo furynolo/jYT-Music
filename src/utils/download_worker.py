@@ -16,20 +16,27 @@ class DownloadWorker(QThread):
             return
 
         try:
-            ffmpeg_dir = os.path.join(os.path.dirname(__file__), '..', 'bin')
+            ffmpeg_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'bin'))
+            ffmpeg_exe = os.path.join(ffmpeg_dir, 'ffmpeg.exe')
+
             ydl_opts = {
                 'format': 'bestaudio/best',
                 'outtmpl': os.path.join(self.output_dir, '%(title)s.%(ext)s'),
                 'quiet': True,
                 'no_warnings': True,
                 'noplaylist': True,
-                'ffmpeg_location': ffmpeg_dir,
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
                     'preferredquality': '192',
                 }],
             }
+
+            if os.path.exists(ffmpeg_exe):
+                ydl_opts['ffmpeg_location'] = ffmpeg_dir
+            else:
+                # Let yt-dlp find it in the system PATH
+                pass
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(self.target_url, download=True)
                 download_path = os.path.join(self.output_dir, f"{info['title']}.mp3")

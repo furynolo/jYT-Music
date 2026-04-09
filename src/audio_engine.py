@@ -8,6 +8,7 @@ class AudioEngine(QObject):
     position_updated = Signal(int)
     duration_updated = Signal(int)
     track_finished = Signal()
+    error_occurred = Signal(int, str) # error_code, error_message
 
     def __init__(self):
         super().__init__()
@@ -30,6 +31,7 @@ class AudioEngine(QObject):
         self.player.playbackStateChanged.connect(self._on_state_changed)
         self.player.durationChanged.connect(self.duration_updated.emit)
         self.player.mediaStatusChanged.connect(self._on_media_status_changed)
+        self.player.errorOccurred.connect(self._on_error_occurred)
 
     def play_file(self, source_path):
         """Play an arbitrary local file."""
@@ -84,3 +86,7 @@ class AudioEngine(QObject):
     def _on_timer_tick(self):
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.position_updated.emit(self.player.position())
+
+    def _on_error_occurred(self, error, error_str):
+        print(f"AudioEngine Error ({error}): {error_str}")
+        self.error_occurred.emit(error.value, error_str)

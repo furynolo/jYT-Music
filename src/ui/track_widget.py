@@ -1,6 +1,7 @@
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
-from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QSizePolicy
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QPixmap
+from ui.common import ElidedLabel
 import os
 
 class TrackItemWidget(QWidget):
@@ -10,7 +11,8 @@ class TrackItemWidget(QWidget):
         self.is_active = False
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setContentsMargins(5, 5, 20, 5)
+        layout.setSpacing(10) # Ensure gap between elements
         
         self.thumb_label = QLabel()
         self.thumb_label.setFixedSize(60, 45) # 4:3 default thumbnail approx
@@ -28,14 +30,12 @@ class TrackItemWidget(QWidget):
         self.assets_dir = os.path.join(base_dir, "..", "assets")
         
         raw_title = track_data.get('title', 'Unknown Title')
-        max_chars = 60
-        if len(raw_title) > max_chars:
-            display_title = raw_title[:max_chars - 8] + "..." + raw_title[-5:]
-        else:
-            display_title = raw_title
-            
-        self.title_label = QLabel(display_title)
+        
+        self.title_label = ElidedLabel(raw_title)
         self.title_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #fff;")
+        
+        # Add tooltip to show full title on hover
+        self.setToolTip(raw_title)
         
         self.type_label = QLabel(track_data.get('result_type', ''))
         self.type_label.setStyleSheet("""
@@ -52,6 +52,7 @@ class TrackItemWidget(QWidget):
         self.duration_label = QLabel(track_data.get('duration', '0:00'))
         self.duration_label.setStyleSheet("font-size: 12px; color: #888;")
         self.duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.duration_label.setMinimumWidth(60) # Protect timestamp from being squeezed
         
         layout.addWidget(self.thumb_label)
         layout.addWidget(self.type_label)

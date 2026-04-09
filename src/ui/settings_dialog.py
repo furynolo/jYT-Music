@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
     QLineEdit, QPushButton, QFormLayout, QFrame,
-    QRadioButton
+    QRadioButton, QFileDialog
 )
 from PySide6.QtCore import Signal, Qt
 
@@ -45,6 +45,27 @@ class SettingsDialog(QDialog):
         mode_layout.addWidget(self.local_radio)
         mode_layout.addStretch()
         app_group.addLayout(mode_layout)
+
+        # Download Location
+        dl_layout = QHBoxLayout()
+        dl_label = QLabel("Download Location:")
+        dl_label.setStyleSheet("font-weight: bold;")
+        self.dl_input = QLineEdit(self.settings_manager.settings.get("download_dir", ""))
+        self.dl_input.setReadOnly(True)
+        self.dl_input.setPlaceholderText("Fallback to Local Music Dir")
+        
+        dl_browse_btn = QPushButton("Browse")
+        dl_browse_btn.setFixedSize(85, 28)
+        dl_browse_btn.setStyleSheet("""
+            QPushButton { background-color: #444; color: white; font-weight: bold; border-radius: 4px; }
+            QPushButton:hover { background-color: #555; }
+        """)
+        dl_browse_btn.clicked.connect(self.browse_download_dir)
+        
+        dl_layout.addWidget(dl_label)
+        dl_layout.addWidget(self.dl_input, 1)
+        dl_layout.addWidget(dl_browse_btn)
+        app_group.addLayout(dl_layout)
         
         # Logout Button (Red)
         logout_btn = QPushButton("Log out of Google")
@@ -120,10 +141,17 @@ class SettingsDialog(QDialog):
         self.logout_requested.emit()
         self.accept()
 
+    def browse_download_dir(self):
+        default_dir = self.dl_input.text() if self.dl_input.text() else self.settings_manager.settings.get("local_music_dir", "")
+        folder = QFileDialog.getExistingDirectory(self, "Select Download Folder", default_dir)
+        if folder:
+            self.dl_input.setText(folder)
+
     def save_settings(self):
         self.settings_manager.set_shortcut("play_pause", self.play_input.text().strip())
         self.settings_manager.set_shortcut("next_track", self.next_input.text().strip())
         self.settings_manager.set_shortcut("prev_track", self.prev_input.text().strip())
+        self.settings_manager.settings["download_dir"] = self.dl_input.text().strip()
         self.settings_manager.save()
         self.accept()
 

@@ -34,7 +34,8 @@ class MainWindow(QMainWindow):
         self.youtube_api = youtube_api
         
         self.setWindowTitle("jYT Music Desktop App")
-        self.setMinimumWidth(1050)
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(400)
         self.resize(1100, 750)
         
         # Set Window Icon
@@ -59,6 +60,14 @@ class MainWindow(QMainWindow):
         # Currently selected cloud track
         self.current_cloud_url = None
         self.current_cloud_video_id = None
+        
+        # Recovery Logic
+        self.recovery_mode = False
+        self.recovery_retry_count = 0
+        self.recovery_timer = QTimer(self)
+        self.recovery_timer.setSingleShot(True)
+        self.recovery_timer.timeout.connect(self.attempt_recovery)
+        self.last_failure_pos = 0
         
         self._cached_playlists = []
 
@@ -94,7 +103,11 @@ class MainWindow(QMainWindow):
         # Added Search Controls to Top Bar
         top_bar_layout.addSpacing(15)
         
-        self.browse_btn = QPushButton("📁 Browse ")
+        self.browse_btn = QPushButton("📁 Browse")
+        self.browse_btn.setStyleSheet("""
+            QPushButton { background-color: #444; color: white; border-radius: 4px; padding: 5px 10px; font-weight: bold; }
+            QPushButton:hover { background-color: #555; }
+        """)
         self.browse_btn.clicked.connect(self.browse_local_folder)
         self.browse_btn.hide()
         top_bar_layout.addWidget(self.browse_btn)
@@ -107,11 +120,18 @@ class MainWindow(QMainWindow):
         top_bar_layout.addWidget(self.search_input)
         
         self.action_btn = QPushButton("Play")
+        self.action_btn.setStyleSheet("""
+            QPushButton { background-color: #444; color: white; border-radius: 4px; padding: 5px 15px; font-weight: bold; }
+            QPushButton:hover { background-color: #555; }
+        """)
         self.action_btn.clicked.connect(self.on_search_triggered)
         top_bar_layout.addWidget(self.action_btn)
         
         self.download_btn = QPushButton("⬇ Download")
-        self.download_btn.setStyleSheet("background-color: #e0a96d; color: black; font-weight: bold;")
+        self.download_btn.setStyleSheet("""
+            QPushButton { background-color: #444; color: white; border-radius: 4px; padding: 5px 10px; font-weight: bold; }
+            QPushButton:hover { background-color: #555; }
+        """)
         self.download_btn.clicked.connect(self.on_download_clicked)
         top_bar_layout.addWidget(self.download_btn)
         
@@ -166,6 +186,7 @@ class MainWindow(QMainWindow):
         self.cloud_content_layout.addWidget(self.cloud_status)
         
         self.cloud_list_widget = QListWidget()
+        self.cloud_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.cloud_list_widget.setStyleSheet("background-color: #121212; font-size: 14px; border: none;")
         self.cloud_list_widget.setCursor(Qt.PointingHandCursor)
         self.cloud_list_widget.itemClicked.connect(self.on_cloud_track_selected)
@@ -179,6 +200,7 @@ class MainWindow(QMainWindow):
         self.local_view_widget = QWidget()
         local_layout = QVBoxLayout(self.local_view_widget)
         self.local_list_widget = QListWidget()
+        self.local_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.local_list_widget.setStyleSheet("background-color: #121212; font-size: 14px; border: none;")
         self.local_list_widget.setCursor(Qt.PointingHandCursor)
         self.local_list_widget.itemClicked.connect(self.on_local_track_selected)
@@ -194,7 +216,9 @@ class MainWindow(QMainWindow):
 
         self.splitter.addWidget(self.sidebar_widget)
         self.splitter.addWidget(self.stacked_widget)
-        self.splitter.setSizes([200, 600])
+        # 1:3 ratio, allow sidebar to shrink to its minimum (handled by stylesheet or setMinimumWidth)
+        self.sidebar_widget.setMinimumWidth(150)
+        self.splitter.setSizes([200, 800])
         
         main_layout.addWidget(self.splitter, 1)
         
@@ -307,9 +331,7 @@ class MainWindow(QMainWindow):
         # Combine flanks
         # Add stretches so center layout stays strictly in the middle
         bottom_bar_layout.addLayout(self.bottom_left_layout)
-        bottom_bar_layout.addStretch(1)
-        bottom_bar_layout.addLayout(self.bottom_center_layout)
-        bottom_bar_layout.addStretch(1)
+        bottom_bar_layout.addLayout(self.bottom_center_layout, 10) # Overwhelming stretch priority
         bottom_bar_layout.addLayout(self.bottom_right_layout)
         
         main_layout.addLayout(bottom_bar_layout)
@@ -323,6 +345,7 @@ class MainWindow(QMainWindow):
         self.audio_engine.track_finished.connect(self.on_track_finished)
         self.audio_engine.position_updated.connect(self.on_position_updated)
         self.audio_engine.duration_updated.connect(self.on_duration_updated)
+        self.audio_engine.error_occurred.connect(self.on_audio_error)
         
         self.progress_slider.sliderPressed.connect(self.on_slider_pressed)
         self.progress_slider.sliderReleased.connect(self.on_slider_released)
@@ -513,6 +536,7 @@ class MainWindow(QMainWindow):
                 artist=track.get("author", "Unknown Artist"),
                 thumbnail_url=track.get("thumbnail_url")
             )
+            self.now_playing_widget.set_rating("none") # Standardize for new tracks
             self.current_cloud_url = track.get("url", "")
             
             # Sync active state down to track widgets
@@ -532,9 +556,6 @@ class MainWindow(QMainWindow):
             self.yt_worker.error_occurred.connect(self.on_yt_error)
             self.yt_worker.start()
             
-            self.now_playing_widget.like_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
-            self.now_playing_widget.dislike_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
-            
             # Auto-fetch rating if authenticated
             if self.current_cloud_video_id and self.auth_manager.is_authenticated():
                 self.rating_worker = RatingFetchWorker(self.youtube_api, self.current_cloud_video_id, self)
@@ -546,14 +567,22 @@ class MainWindow(QMainWindow):
             self.current_cloud_url = None
             self.current_cloud_video_id = None
             
+            # Update background metadata for local files
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            logo_path = os.path.join(base_dir, "..", "assets", "logo.svg")
+            
+            self.now_playing_widget.update_track(
+                title=track.get("name", "Unknown Track"),
+                artist="Local File",
+                thumbnail_url=None, # Trigger the local default logic if needed
+                pixmap=QPixmap(logo_path)
+            )
+            
             # Sync local active state
             for i in range(self.local_list_widget.count()):
                 item = self.local_list_widget.item(i)
                 data = item.data(Qt.UserRole)
                 is_this_active = (data.get("path") == track["path"])
-                # We need to manually handle highlighting for local items since they don't use TrackItemWidget currently (just strings)
-                # Wait, I should probably use TrackItemWidget for local too for consistency.
-                # For now, let's just highlight the item if it's a standard string item.
                 if is_this_active:
                     item.setSelected(True)
                     self.local_list_widget.scrollToItem(item, QListWidget.PositionAtCenter)
@@ -781,26 +810,13 @@ class MainWindow(QMainWindow):
         success = self.youtube_api.rate_video(self.current_cloud_video_id, rating)
         if success:
             self.flash_status(f"Rated video as: {rating}", "#1ed760")
-            if rating == "like":
-                self.now_playing_widget.like_btn.setStyleSheet("QPushButton { background-color: #1ed760; color: black; font-weight: bold; border-radius: 4px; font-size: 14px; padding: 2px; }")
-                self.now_playing_widget.dislike_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
-            elif rating == "dislike":
-                self.now_playing_widget.dislike_btn.setStyleSheet("QPushButton { background-color: #ff5555; color: white; font-weight: bold; border-radius: 4px; font-size: 14px; padding: 2px; }")
-                self.now_playing_widget.like_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
+            self.now_playing_widget.set_rating(rating)
 
     def on_rating_fetched(self, video_id, rating):
         if video_id != self.current_cloud_video_id:
             return # Stale worker
             
-        if rating == "like":
-            self.now_playing_widget.like_btn.setStyleSheet("QPushButton { background-color: #1ed760; color: black; font-weight: bold; border-radius: 4px; font-size: 14px; padding: 2px; }")
-            self.now_playing_widget.dislike_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
-        elif rating == "dislike":
-            self.now_playing_widget.dislike_btn.setStyleSheet("QPushButton { background-color: #ff5555; color: white; font-weight: bold; border-radius: 4px; font-size: 14px; padding: 2px; }")
-            self.now_playing_widget.like_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
-        else:
-            self.now_playing_widget.like_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
-            self.now_playing_widget.dislike_btn.setStyleSheet("QPushButton { background-color: transparent; color: white; border-radius: 4px; font-size: 14px; } QPushButton:hover { background-color: #333; }")
+        self.now_playing_widget.set_rating(rating)
 
     def on_yt_result_ready(self, track_info):
         self.action_btn.setEnabled(True)
@@ -844,9 +860,12 @@ class MainWindow(QMainWindow):
             self.flash_status("Search or select a track first to download.", "#ff5555")
             return
             
-        output_dir = self.settings_manager.settings.get("local_music_dir", "")
+        output_dir = self.settings_manager.settings.get("download_dir", "")
         if not output_dir:
-            self.flash_status("Please set a Local Music Directory in Local Mode first!", "#ff5555")
+            output_dir = self.settings_manager.settings.get("local_music_dir", "")
+            
+        if not output_dir:
+            self.flash_status("Please set a Download Location in Settings first!", "#ff5555")
             return
 
         self.flash_status(f"Starting Download to {output_dir}...", color="#e0a96d")
@@ -858,10 +877,82 @@ class MainWindow(QMainWindow):
 
     def on_download_finished(self, msg, success):
         self.download_btn.setEnabled(True)
-        color = "#1ed760" if success else "#ff5555"
-        self.flash_status(msg, color)
+        self.flash_status(msg, "#1ed760" if success else "#ff5555")
         if success and not self.is_cloud_mode:
-            self.scan_and_load_local(self.settings_manager.settings.get("local_music_dir", ""))
+            self.scan_and_load_local(self.settings_manager.settings.get("download_dir", "") or self.settings_manager.settings.get("local_music_dir", ""))
+
+    def on_audio_error(self, error_code, error_str):
+        if self.is_cloud_mode and self.current_cloud_url:
+            # We treat Demuxer failures during streaming as recoverable
+            recoverable_codes = [
+                3, # QMediaPlayer.Error.NetworkError
+                5, # QMediaPlayer.Error.ResourceError
+            ]
+            
+            # -10054 is often reported as ResourceError or NetworkError by Qt
+            print(f"Detected potential stream failure: {error_str} (Code: {error_code})")
+            
+            if error_code in recoverable_codes or "demuxing failed" in error_str.lower():
+                self.initiate_recovery()
+            else:
+                self.flash_status(f"Non-recoverable audio error: {error_str}", "#ff5555")
+
+    def initiate_recovery(self):
+        if self.recovery_mode: return
+        
+        self.recovery_mode = True
+        self.last_failure_pos = self.audio_engine.player.position()
+        self.flash_status("Streaming interrupted. Attempting to recover...", "#e0a96d")
+        
+        # Exponential backoff: 0.5s, 1s, 2s, 4s, 8s...
+        delay = int(500 * (2 ** self.recovery_retry_count))
+        # Cap at 30 seconds
+        delay = min(delay, 30000)
+        
+        print(f"Starting recovery attempt {self.recovery_retry_count + 1} in {delay}ms...")
+        self.recovery_timer.start(delay)
+
+    def attempt_recovery(self):
+        if not self.current_cloud_url:
+            self.recovery_mode = False
+            return
+            
+        self.recovery_retry_count += 1
+        
+        # Restart YT extraction
+        if self.yt_worker:
+            self.yt_worker.terminate()
+            
+        self.yt_worker = YTWorker(self.current_cloud_url, parent=self)
+        self.yt_worker.result_ready.connect(self.on_recovery_result_ready)
+        self.yt_worker.error_occurred.connect(self.on_recovery_error)
+        self.yt_worker.start()
+
+    def on_recovery_result_ready(self, track_info):
+        print("Recovery successful: fresh stream URL obtained.")
+        self.recovery_mode = False
+        self.recovery_retry_count = 0
+        
+        stream_url = track_info['stream_url']
+        self.audio_engine.player.setSource(QUrl(stream_url))
+        self.audio_engine.player.play()
+        
+        # Seek to last known position
+        if self.last_failure_pos > 0:
+            print(f"Resuming from saved position: {self.last_failure_pos}ms")
+            # Wait a tiny bit for the source to load before seeking
+            QTimer.singleShot(500, lambda: self.audio_engine.seek(self.last_failure_pos))
+            
+        self.flash_status("Playback recovered successfully!", "#1ed760")
+
+    def on_recovery_error(self, error_msg):
+        print(f"Recovery attempt failed: {error_msg}")
+        self.recovery_mode = False
+        if self.recovery_retry_count < 5: # Max 5 automated retries
+            self.initiate_recovery()
+        else:
+            self.flash_status("Recovery failed after multiple attempts.", "#ff5555")
+            self.recovery_retry_count = 0
 
     def show_now_playing_menu(self):
         if not self.current_cloud_url:
@@ -954,7 +1045,9 @@ class MainWindow(QMainWindow):
         menu.exec(self.local_list_widget.viewport().mapToGlobal(pos))
 
     def browse_local_folder(self):
-        default_dir = self.settings_manager.settings.get("local_music_dir", "")
+        default_dir = self.settings_manager.settings.get("download_dir", "")
+        if not default_dir:
+            default_dir = self.settings_manager.settings.get("local_music_dir", "")
         folder_path = QFileDialog.getExistingDirectory(self, "Select Music Folder", default_dir)
         if folder_path:
             self.settings_manager.settings["local_music_dir"] = folder_path
@@ -1043,7 +1136,10 @@ class MainWindow(QMainWindow):
             self.sidebar_widget.hide()
             self.stacked_widget.setCurrentIndex(1)
             if not self.local_files:
-                saved_dir = self.settings_manager.settings.get("local_music_dir", "")
+                saved_dir = self.settings_manager.settings.get("download_dir", "")
+                if not saved_dir:
+                    saved_dir = self.settings_manager.settings.get("local_music_dir", "")
+                
                 if saved_dir:
                     self.scan_and_load_local(saved_dir)
 
