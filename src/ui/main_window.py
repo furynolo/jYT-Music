@@ -1138,7 +1138,36 @@ class MainWindow(QMainWindow):
                     self.scan_and_load_local(saved_dir)
 
     def closeEvent(self, event):
+        # 1. Save Settings
         self.settings_manager.save()
+        
+        # 2. Stop Audio
         self.audio_engine.stop()
-        self.shortcut_manager.stop()
+        
+        # 3. Stop Global Hotkeys
+        if hasattr(self, 'shortcut_manager'):
+            self.shortcut_manager.stop()
+        
+        # 4. Kill all background workers
+        workers_to_stop = [
+            self.yt_worker, 
+            self.download_worker, 
+            self.playlist_worker, 
+            self.items_worker, 
+            self.search_worker
+        ]
+        for worker in workers_to_stop:
+            if worker and worker.isRunning():
+                worker.terminate()
+                worker.wait()
+        
+        # 5. Clear image workers
+        for worker in self.image_workers:
+            if worker.isRunning():
+                worker.terminate()
+                worker.wait()
+        self.image_workers.clear()
+        
+        # 6. Final Clean exit
         super().closeEvent(event)
+        QApplication.quit()
