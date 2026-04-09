@@ -109,9 +109,6 @@ class MainWindow(QMainWindow):
             QPushButton:hover { background-color: #555; }
         """)
         self.browse_btn.clicked.connect(self.browse_local_folder)
-        self.browse_btn.hide()
-        top_bar_layout.addWidget(self.browse_btn)
-
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search YouTube or Paste URL...")
         self.search_input.setMinimumWidth(350)
@@ -134,9 +131,7 @@ class MainWindow(QMainWindow):
         """)
         self.download_btn.clicked.connect(self.on_download_clicked)
         top_bar_layout.addWidget(self.download_btn)
-        
-        top_bar_layout.addSpacerItem(QSpacerItem(20, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
-        
+
         self.login_btn = QPushButton("Log in to Google")
         self.login_btn.setStyleSheet("background-color: #4285F4; color: white; font-weight: bold;")
         self.login_btn.setFocusPolicy(Qt.NoFocus)
@@ -276,7 +271,7 @@ class MainWindow(QMainWindow):
         self.bottom_left_layout.addWidget(self.play_pause_btn)
         self.bottom_left_layout.addWidget(self.next_btn)
         self.bottom_left_layout.addWidget(self.time_label_combo)
-        self.bottom_left_layout.addStretch()
+        self.bottom_left_layout.addStretch() # Push center widget from the left
         
         # CENTER FLANK
         self.bottom_center_layout = QHBoxLayout()
@@ -328,10 +323,9 @@ class MainWindow(QMainWindow):
         self.bottom_right_layout.addWidget(self.repeat_btn)
         self.bottom_right_layout.addWidget(self.shuffle_btn)
         
-        # Combine flanks
-        # Add stretches so center layout stays strictly in the middle
+        # Combine flanks with high stretch for the center to allow dynamic filling
         bottom_bar_layout.addLayout(self.bottom_left_layout)
-        bottom_bar_layout.addLayout(self.bottom_center_layout, 10) # Overwhelming stretch priority
+        bottom_bar_layout.addLayout(self.bottom_center_layout, 10)
         bottom_bar_layout.addLayout(self.bottom_right_layout)
         
         main_layout.addLayout(bottom_bar_layout)

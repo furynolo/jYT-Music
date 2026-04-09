@@ -29,10 +29,12 @@ class NowPlayingWidget(QWidget):
         text_layout.setAlignment(Qt.AlignVCenter)
         
         self.title_label = ElidedLabel("Not Playing")
+        self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setStyleSheet("font-weight: bold; font-size: 14px; color: white;")
         # Remove setFixedWidth to allow dynamic scaling
         
         self.artist_label = ElidedLabel("")
+        self.artist_label.setAlignment(Qt.AlignCenter)
         self.artist_label.setStyleSheet("font-size: 12px; color: #aaa;")
 
         text_layout.addWidget(self.title_label)
@@ -73,9 +75,11 @@ class NowPlayingWidget(QWidget):
         actions_layout.addWidget(self.like_btn)
         actions_layout.addWidget(self.ellipsis_btn)
 
+        main_layout.addStretch() # Left spacer to help center
         main_layout.addWidget(self.thumbnail_label)
-        main_layout.addLayout(text_layout, 1) # Give text area the stretching priority
+        main_layout.addLayout(text_layout, 1) # Text still grows to fill space
         main_layout.addLayout(actions_layout)
+        main_layout.addStretch() # Right spacer to help center
         
     def set_rating(self, rating):
         """

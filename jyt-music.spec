@@ -9,6 +9,7 @@ block_cipher = None
 added_files = [
     ('src/assets/*', 'assets'),
     ('src/ui/style.qss', 'ui'),
+    ('docs/client_secret.json', 'docs'),
 ]
 
 # Check for bin folder (FFmpeg)
@@ -29,7 +30,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['.env', 'token.json', 'settings.json', 'tests'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

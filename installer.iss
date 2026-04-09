@@ -25,6 +25,10 @@ SetupIconFile=src\assets\logo.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+; Tells the installer to check if the app is running and ask to close it
+CloseApplications=yes
+; Ensures the icon shows up in Windows "Add/Remove Programs"
+UninstallDisplayIcon={app}\{#MyAppExeName}
 ; Icon for the installer itself (use logo.ico if converted, or omit)
 ; SetupIconFile=src\assets\logo.ico
 
@@ -46,3 +50,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 [Run]
 ; Option to launch the app after installation
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+; Ensures the entire install directory is removed even if files were created after installation
+Type: filesandordirs; Name: "{app}"

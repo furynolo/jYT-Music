@@ -6,7 +6,7 @@ os.environ["QT_LOGGING_RULES"] = "qt.multimedia.ffmpeg.debug=false;qt.multimedia
 
 from PySide6.QtWidgets import QApplication
 from ui.main_window import MainWindow
-from utils.config import settings_manager
+from utils.config import settings_manager, get_resource_path
 from shortcut_manager import ShortcutManager
 from audio_engine import AudioEngine
 from utils.auth import AuthManager
@@ -14,7 +14,8 @@ from youtube_api import YouTubeAPI
 
 def load_stylesheet(app):
     try:
-        with open("src/ui/style.qss", "r") as f:
+        qss_path = get_resource_path("ui/style.qss")
+        with open(qss_path, "r") as f:
             app.setStyleSheet(f.read())
     except FileNotFoundError:
         print("Stylesheet not found. Using default styles.")
