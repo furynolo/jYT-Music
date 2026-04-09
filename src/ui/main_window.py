@@ -34,7 +34,8 @@ class MainWindow(QMainWindow):
         self.youtube_api = youtube_api
         
         self.setWindowTitle("jYT Music Desktop App")
-        self.setMinimumWidth(1050)
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(400)
         self.resize(1100, 750)
         
         # Set Window Icon
@@ -215,7 +216,9 @@ class MainWindow(QMainWindow):
 
         self.splitter.addWidget(self.sidebar_widget)
         self.splitter.addWidget(self.stacked_widget)
-        self.splitter.setSizes([200, 600])
+        # 1:3 ratio, allow sidebar to shrink to its minimum (handled by stylesheet or setMinimumWidth)
+        self.sidebar_widget.setMinimumWidth(150)
+        self.splitter.setSizes([200, 800])
         
         main_layout.addWidget(self.splitter, 1)
         
@@ -328,9 +331,7 @@ class MainWindow(QMainWindow):
         # Combine flanks
         # Add stretches so center layout stays strictly in the middle
         bottom_bar_layout.addLayout(self.bottom_left_layout)
-        bottom_bar_layout.addStretch(1)
-        bottom_bar_layout.addLayout(self.bottom_center_layout)
-        bottom_bar_layout.addStretch(1)
+        bottom_bar_layout.addLayout(self.bottom_center_layout, 10) # Overwhelming stretch priority
         bottom_bar_layout.addLayout(self.bottom_right_layout)
         
         main_layout.addLayout(bottom_bar_layout)

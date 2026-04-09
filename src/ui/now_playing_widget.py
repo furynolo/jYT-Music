@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushBu
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon
 from utils.image_worker import ImageWorker
+from ui.common import ElidedLabel
 import os
 
 class NowPlayingWidget(QWidget):
@@ -27,13 +28,12 @@ class NowPlayingWidget(QWidget):
         text_layout.setSpacing(2)
         text_layout.setAlignment(Qt.AlignVCenter)
         
-        self.title_label = QLabel("Not Playing")
+        self.title_label = ElidedLabel("Not Playing")
         self.title_label.setStyleSheet("font-weight: bold; font-size: 14px; color: white;")
-        self.title_label.setFixedWidth(200) # Prevents layout stretching
+        # Remove setFixedWidth to allow dynamic scaling
         
-        self.artist_label = QLabel("")
+        self.artist_label = ElidedLabel("")
         self.artist_label.setStyleSheet("font-size: 12px; color: #aaa;")
-        self.artist_label.setFixedWidth(200)
 
         text_layout.addWidget(self.title_label)
         text_layout.addWidget(self.artist_label)
@@ -74,31 +74,9 @@ class NowPlayingWidget(QWidget):
         actions_layout.addWidget(self.ellipsis_btn)
 
         main_layout.addWidget(self.thumbnail_label)
-        main_layout.addLayout(text_layout)
+        main_layout.addLayout(text_layout, 1) # Give text area the stretching priority
         main_layout.addLayout(actions_layout)
         
-    def update_track(self, title, artist, thumbnail_url=None, pixmap=None):
-        # Truncate strings to prevent UI pushing
-        title_disp = (title[:35] + '...') if len(title) > 35 else title
-        artist_disp = (artist[:35] + '...') if len(artist) > 35 else artist
-        
-        self.title_label.setText(title_disp)
-        self.artist_label.setText(artist_disp)
-        
-        if pixmap:
-            self.set_thumbnail(pixmap, None)
-        elif thumbnail_url:
-            if self.image_worker:
-                self.image_worker.terminate()
-            self.image_worker = ImageWorker(thumbnail_url)
-            self.image_worker.image_ready.connect(self.set_thumbnail)
-            self.image_worker.start()
-        else:
-            self.thumbnail_label.setPixmap(QIcon().pixmap(50, 50)) # Clear
-            
-    def set_thumbnail(self, pixmap, url=None):
-        self.thumbnail_label.setPixmap(pixmap.scaled(50, 50, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
-
     def set_rating(self, rating):
         """
         Swaps icons between outline and solid based on the current rating.
@@ -116,3 +94,23 @@ class NowPlayingWidget(QWidget):
         else: # none
             self.like_btn.setIcon(QIcon(os.path.join(assets_dir, "thumb_up_outline.svg")))
             self.dislike_btn.setIcon(QIcon(os.path.join(assets_dir, "thumb_down_outline.svg")))
+
+    def update_track(self, title, artist, thumbnail_url=None, pixmap=None):
+        self.title_label.setText(title)
+        self.title_label.setToolTip(title)
+        self.artist_label.setText(artist)
+        self.artist_label.setToolTip(artist)
+        
+        if pixmap:
+            self.set_thumbnail(pixmap, None)
+        elif thumbnail_url:
+            if self.image_worker:
+                self.image_worker.terminate()
+            self.image_worker = ImageWorker(thumbnail_url)
+            self.image_worker.image_ready.connect(self.set_thumbnail)
+            self.image_worker.start()
+        else:
+            self.thumbnail_label.setPixmap(QIcon().pixmap(50, 50)) # Clear
+            
+    def set_thumbnail(self, pixmap, url=None):
+        self.thumbnail_label.setPixmap(pixmap.scaled(50, 50, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
