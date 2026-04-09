@@ -5,3 +5,5 @@ pynput
 python-dotenv
 google-api-python-client
 google-auth-oauthlib
+pyinstaller
+Pillow

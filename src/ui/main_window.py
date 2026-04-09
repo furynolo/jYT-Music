@@ -41,7 +41,7 @@ class MainWindow(QMainWindow):
         # Set Window Icon
         base_dir = os.path.dirname(os.path.abspath(__file__))
         assets_dir = os.path.join(base_dir, "..", "assets")
-        self.setWindowIcon(QIcon(os.path.join(assets_dir, "logo.svg")))
+        self.setWindowIcon(QIcon(os.path.join(assets_dir, "logo.ico")))
         
         self.is_cloud_mode = True
         self.local_files = []
