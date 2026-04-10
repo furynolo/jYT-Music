@@ -324,13 +324,23 @@ class PlaylistItemsWorker(QThread):
             all_items = []
             next_token = None
             while True:
-                items, next_token = self.youtube_api.get_playlist_items(self.playlist_id, next_token)
-                if not items:
-                    break
-                self.chunk_loaded.emit(items)
-                all_items.extend(items)
-                if not next_token:
-                    break
+                try:
+                    items, next_token = self.youtube_api.get_playlist_items(self.playlist_id, next_token)
+                    if not items:
+                        break
+                    self.chunk_loaded.emit(items)
+                    all_items.extend(items)
+                    if not next_token:
+                        break
+                except Exception as e:
+                    # Log specific error and try to continue if there's a token, or notify UI
+                    print(f"Transient error in playlist loader: {e}")
+                    self.error_occurred.emit(f"Loading stalled: {e}. Retrying...")
+                    # Small sleep before retry to let network settle
+                    import time
+                    time.sleep(2)
+                    continue 
+
             self.items_loaded.emit(all_items)
         except Exception as e:
             self.error_occurred.emit(str(e))

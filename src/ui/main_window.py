@@ -1238,14 +1238,17 @@ class MainWindow(QMainWindow):
         # 1. Save Settings
         self.settings_manager.save()
         
-        # 2. Stop Audio
+        # 2. Stop Audio & Hotkeys
         self.audio_engine.stop()
-        
-        # 3. Stop Global Hotkeys
         if hasattr(self, 'shortcut_manager'):
             self.shortcut_manager.stop()
         
-        # 4. Kill all background workers
+        # 3. Stop Batch Rendering
+        self._render_timer.stop()
+        self._pending_cloud_tracks.clear()
+        self._pending_images.clear()
+        
+        # 4. Kill Heavy Background workers
         workers_to_stop = [
             self.yt_worker, 
             self.download_worker, 
@@ -1255,16 +1258,23 @@ class MainWindow(QMainWindow):
         ]
         for worker in workers_to_stop:
             if worker and worker.isRunning():
+                # Disconnect to prevent callbacks during shutdown
+                try: worker.disconnect()
+                except: pass
                 worker.terminate()
-                worker.wait()
+                # Short wait for heavy workers, but don't hang forever
+                worker.wait(500) 
         
-        # 5. Clear image workers
+        # 5. Fast-kill image workers (don't wait for them)
         for worker in self.image_workers:
             if worker.isRunning():
+                try: worker.disconnect()
+                except: pass
                 worker.terminate()
-                worker.wait()
         self.image_workers.clear()
         
         # 6. Final Clean exit
         super().closeEvent(event)
-        QApplication.quit()
+        # Force terminate any remaining threads in the process
+        import os
+        os._exit(0)
