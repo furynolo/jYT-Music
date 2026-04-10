@@ -118,13 +118,22 @@ class YouTubeAPI:
                 temp_tracks = []
                 
                 for item in response.get('items', []):
-                    snippet = item['snippet']
-                    video_id = snippet['resourceId']['videoId']
+                    snippet = item.get('snippet', {})
+                    if not snippet: continue
+                    
+                    # Defensively find Video ID
+                    resource = snippet.get('resourceId', {})
+                    video_id = resource.get('videoId')
+                    if not video_id: 
+                        video_id = snippet.get('video_id') # Fallback
+                    
+                    if not video_id: continue
+                    
                     thumbnail_url = snippet.get('thumbnails', {}).get('default', {}).get('url', '')
                     
                     video_ids.append(video_id)
                     temp_tracks.append({
-                        "title": snippet['title'],
+                        "title": snippet.get('title', 'Unknown Track'),
                         "author": snippet.get('videoOwnerChannelTitle', snippet.get('channelTitle', 'Unknown Artist')),
                         "video_id": video_id,
                         "url": f"https://www.youtube.com/watch?v={video_id}",

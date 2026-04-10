@@ -56,6 +56,21 @@ class MainWindow(QMainWindow):
         
         # Keep track of active image workers to prevent garbage collection
         self.image_workers = []
+
+        # Batch rendering for large playlists to prevent UI lag
+        self._pending_cloud_tracks = []
+        self._render_timer = QTimer(self)
+        self._render_timer.setInterval(45) # Increased to 45ms for butter-smooth window dragging
+        self._render_timer.timeout.connect(self._process_cloud_render_queue)
+        
+        # Performance optimization: track active item for O(1) updates
+        self.last_active_cloud_item = None
+        self._url_to_item = {} # Map URLs to ListWidgets for O(1) lookup
+        
+        # Image Loading Throttler to prevent "Thread Explosion"
+        self._pending_images = [] # Queue of (url, widget)
+        self._active_image_workers = 0
+        self._MAX_IMAGE_WORKERS = 5 # Limit concurrent image downloads
         
         # Currently selected cloud track
         self.current_cloud_url = None
@@ -434,7 +449,19 @@ class MainWindow(QMainWindow):
         self.cloud_status.show()
         self.cloud_list_widget.hide()
         
+        # 1. Terminate previous loader if it's still running to prevent "Ghost Tracks"
+        if self.items_worker and self.items_worker.isRunning():
+            self.items_worker.terminate()
+            self.items_worker.wait()
+            
         self.image_workers = [] # Clear old workers
+        self._pending_cloud_tracks.clear()
+        self._render_timer.stop()
+        self._url_to_item.clear()
+        self.last_active_cloud_item = None
+        self._pending_images.clear()
+        self._active_image_workers = 0
+        
         self._current_playlist_total_seconds = 0
         self._current_playlist_track_count = 0
 
@@ -445,29 +472,18 @@ class MainWindow(QMainWindow):
         self.items_worker.start()
 
     def on_playlist_chunk_loaded(self, tracks):
-        # Show list if we have at least one chunk
-        if self.cloud_status.isVisible():
-            self.cloud_status.hide()
-            self.cloud_list_widget.show()
+        # Accumulate tracks for iterative rendering
+        self._pending_cloud_tracks.extend(tracks)
+        
+        # Start the "waterfall" rendering if not already running
+        if not self._render_timer.isActive():
+            self._render_timer.start()
             
+        # Update running duration/counts (fast operation)
         for track in tracks:
             self._current_playlist_total_seconds += parse_duration_to_seconds(track.get('duration', '0:00'))
             self._current_playlist_track_count += 1
             
-            list_item = QListWidgetItem(self.cloud_list_widget)
-            list_item.setData(Qt.UserRole, track)
-            
-            widget = TrackItemWidget(track)
-            list_item.setSizeHint(widget.sizeHint())
-            self.cloud_list_widget.setItemWidget(list_item, widget)
-            
-            thumb_url = track.get("thumbnail_url")
-            if thumb_url:
-                worker = ImageWorker(thumb_url, parent=self)
-                worker.image_ready.connect(lambda p, _, w=widget: w.set_thumbnail(p))
-                worker.start()
-                self.image_workers.append(worker)
-                
         # Live-update header metadata with running totals
         from utils.duration_utils import format_seconds_to_human
         duration_str = format_seconds_to_human(self._current_playlist_total_seconds)
@@ -478,6 +494,81 @@ class MainWindow(QMainWindow):
             self.playlist_header.current_thumb,
             duration_str=duration_str
         )
+
+    def _process_cloud_render_queue(self):
+        """Processes a batch of pending tracks to keep the UI responsive."""
+        if not self._pending_cloud_tracks:
+            self._render_timer.stop()
+            return
+
+        # Show list if it was hidden
+        if self.cloud_status.isVisible():
+            self.cloud_status.hide()
+            self.cloud_list_widget.show()
+
+        # Build a thin batch (6 items per 45ms = smooth as butter)
+        BATCH_SIZE = 6
+        batch = self._pending_cloud_tracks[:BATCH_SIZE]
+        self._pending_cloud_tracks = self._pending_cloud_tracks[BATCH_SIZE:]
+
+        for track in batch:
+            track_url = track.get("url")
+            list_item = QListWidgetItem(self.cloud_list_widget)
+            list_item.setData(Qt.UserRole, track)
+            
+            # Store in map for O(1) UI syncing later
+            if track_url:
+                self._url_to_item[track_url] = list_item
+            
+            widget = TrackItemWidget(track)
+            list_item.setSizeHint(widget.sizeHint())
+            self.cloud_list_widget.setItemWidget(list_item, widget)
+            
+            thumb_url = track.get("thumbnail_url")
+            if thumb_url:
+                # Add to throttled image queue instead of starting immediately
+                self._pending_images.append((thumb_url, widget))
+        
+        # Kick off image processing if not full
+        self._process_image_queue()
+
+        # Update status if still loading
+        if self._pending_cloud_tracks:
+            self.flash_status(f"Loading tracks... ({self.cloud_list_widget.count()} loaded)", color="#aaa")
+        else:
+            self.flash_status(f"Fully loaded {self.cloud_list_widget.count()} tracks.", color="#4285F4")
+
+    def _process_image_queue(self):
+        """Processes the throttled image queue."""
+        if not self._pending_images or self._active_image_workers >= self._MAX_IMAGE_WORKERS:
+            return
+            
+        while self._pending_images and self._active_image_workers < self._MAX_IMAGE_WORKERS:
+            url, widget = self._pending_images.pop(0)
+            
+            worker = ImageWorker(url, parent=self)
+            self._active_image_workers += 1
+            
+            # Connect cleanup with safety check to prevent libshiboken "already deleted" crashes
+            def set_thumbnail_safe(pixmap, _, w=widget):
+                try:
+                    # Check if the widget hasn't been garbage collected or deleted by Qt
+                    if w and not w.isHidden(): # Simple proxy for "is this still in a list?"
+                        w.set_thumbnail(pixmap)
+                except RuntimeError:
+                    # Widget was already deleted, ignore safely
+                    pass
+
+            worker.image_ready.connect(set_thumbnail_safe)
+            worker.finished.connect(self._on_image_worker_finished)
+            
+            worker.start()
+            self.image_workers.append(worker)
+
+    def _on_image_worker_finished(self):
+        self._active_image_workers -= 1
+        # Continue processing the queue
+        self._process_image_queue()
 
     def on_playlist_items_loaded(self, all_tracks):
         # Final cleanup or status update when whole playlist is fetched
@@ -533,17 +624,23 @@ class MainWindow(QMainWindow):
             self.now_playing_widget.set_rating("none") # Standardize for new tracks
             self.current_cloud_url = track.get("url", "")
             
-            # Sync active state down to track widgets
-            for i in range(self.cloud_list_widget.count()):
-                item = self.cloud_list_widget.item(i)
-                widget = self.cloud_list_widget.itemWidget(item)
-                if widget:
-                    is_this_active = (widget.track_data.get("url") == self.current_cloud_url)
-                    widget.set_active(is_this_active)
-                    if is_this_active:
-                        widget.set_playing(self.audio_engine.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState)
-                        # Auto-Scroll to center the playing track
-                        self.cloud_list_widget.scrollToItem(item, QListWidget.PositionAtCenter)
+            # PERFORMANCE FIX: O(1) Sync active state
+            # 1. Deactivate old item
+            if self.last_active_cloud_item:
+                old_widget = self.cloud_list_widget.itemWidget(self.last_active_cloud_item)
+                if old_widget:
+                    old_widget.set_active(False)
+            
+            # 2. Activate new item using our O(1) map
+            new_item = self._url_to_item.get(self.current_cloud_url)
+            if new_item:
+                new_widget = self.cloud_list_widget.itemWidget(new_item)
+                if new_widget:
+                    new_widget.set_active(True)
+                    new_widget.set_playing(self.audio_engine.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState)
+                    # Auto-Scroll to center the playing track
+                    self.cloud_list_widget.scrollToItem(new_item, QListWidget.PositionAtCenter)
+                self.last_active_cloud_item = new_item
             
             self.yt_worker = YTWorker(self.current_cloud_url, parent=self)
             self.yt_worker.result_ready.connect(self.on_yt_result_ready)
