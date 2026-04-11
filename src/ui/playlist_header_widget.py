@@ -59,6 +59,7 @@ class PlaylistHeaderWidget(QWidget):
             QPushButton { background-color: #FF0000; border-radius: 24px; border: none; } 
             QPushButton:hover { background-color: #CC0000; }
         """)
+        self.play_btn.setFocusPolicy(Qt.NoFocus)
         self.play_btn.setCursor(Qt.PointingHandCursor)
         self.play_btn.clicked.connect(self.play_all_clicked.emit)
         
@@ -70,6 +71,7 @@ class PlaylistHeaderWidget(QWidget):
             QPushButton { background-color: #333; border-radius: 24px; border: none; } 
             QPushButton:hover { background-color: #444; }
         """)
+        self.shuffle_play_btn.setFocusPolicy(Qt.NoFocus)
         self.shuffle_play_btn.setCursor(Qt.PointingHandCursor)
         self.shuffle_play_btn.clicked.connect(self.shuffle_play_clicked.emit)
         
