@@ -59,6 +59,7 @@ class PlaylistHeaderWidget(QWidget):
             QPushButton { background-color: #FF0000; border-radius: 24px; border: none; } 
             QPushButton:hover { background-color: #CC0000; }
         """)
+        self.play_btn.setFocusPolicy(Qt.NoFocus)
         self.play_btn.setCursor(Qt.PointingHandCursor)
         self.play_btn.clicked.connect(self.play_all_clicked.emit)
         
@@ -70,6 +71,7 @@ class PlaylistHeaderWidget(QWidget):
             QPushButton { background-color: #333; border-radius: 24px; border: none; } 
             QPushButton:hover { background-color: #444; }
         """)
+        self.shuffle_play_btn.setFocusPolicy(Qt.NoFocus)
         self.shuffle_play_btn.setCursor(Qt.PointingHandCursor)
         self.shuffle_play_btn.clicked.connect(self.shuffle_play_clicked.emit)
         
@@ -81,6 +83,10 @@ class PlaylistHeaderWidget(QWidget):
         self.image_worker = None
 
     def update_header(self, title, author, item_count, thumbnail_url, duration_str=None):
+        # Determine if we actually need to change the image
+        url_changed = (thumbnail_url != getattr(self, 'current_thumb', None))
+        has_pixmap = self.cover_label.pixmap() is not None and not self.cover_label.pixmap().isNull()
+
         self.current_title = title
         self.current_author = author
         self.current_count = item_count
@@ -93,11 +99,17 @@ class PlaylistHeaderWidget(QWidget):
             meta_text += f"\n{duration_str}" # Newline for vertical column
         self.meta_label.setText(meta_text)
         
+        # Only trigger image load if the URL is new OR if we don't have an image yet
         if thumbnail_url:
-            self.cover_label.setText("Loading...")
-            self.image_worker = ImageWorker(thumbnail_url, parent=self)
-            self.image_worker.image_ready.connect(self.set_cover)
-            self.image_worker.start()
+            if url_changed or not has_pixmap:
+                # Only show "Loading..." if we don't have a valid image yet
+                if not has_pixmap:
+                    self.cover_label.clear()
+                    self.cover_label.setText("Loading...")
+                
+                self.image_worker = ImageWorker(thumbnail_url, parent=self)
+                self.image_worker.image_ready.connect(self.set_cover)
+                self.image_worker.start()
         else:
             self.cover_label.clear()
             self.cover_label.setText("No Image")

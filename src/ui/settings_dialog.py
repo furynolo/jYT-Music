@@ -25,7 +25,7 @@ class SettingsDialog(QDialog):
         # --- TOP Section: Application Preferences ---
         app_group = QVBoxLayout()
         header_app = QLabel("<b>Application Preferences</b>")
-        header_app.setStyleSheet("font-size: 15px; color: #FF0000;")
+        header_app.setStyleSheet("font-size: 15px; color: #AAAAAA;")
         app_group.addWidget(header_app)
         
         # Mode Selection (Radio Buttons)
@@ -39,6 +39,14 @@ class SettingsDialog(QDialog):
         self.local_radio.setChecked(not self.is_cloud_mode)
         
         self.cloud_radio.toggled.connect(self.on_mode_radio_toggled)
+        
+        self.cloud_radio.setStyleSheet("""
+            QRadioButton { color: white; spacing: 8px; }
+            QRadioButton::indicator { width: 18px; height: 18px; border-radius: 9px; border: 2px solid #555; background: #222; }
+            QRadioButton::indicator:checked { background: #bbb; border: 2px solid #bbb; }
+            QRadioButton::indicator:hover { border: 2px solid #777; }
+        """)
+        self.local_radio.setStyleSheet(self.cloud_radio.styleSheet())
         
         mode_layout.addWidget(mode_label)
         mode_layout.addWidget(self.cloud_radio)
@@ -88,7 +96,7 @@ class SettingsDialog(QDialog):
         # --- BOTTOM Section: Keyboard Shortcuts ---
         shortcut_group = QVBoxLayout()
         header_shortcuts = QLabel("<b>Keyboard Shortcuts</b>")
-        header_shortcuts.setStyleSheet("font-size: 15px; color: #FF0000;")
+        header_shortcuts.setStyleSheet("font-size: 15px; color: #AAAAAA;")
         shortcut_group.addWidget(header_shortcuts)
         
         info_label = QLabel("Global Hotkeys (pynput format, e.g. <ctrl>+<shift>+p)")

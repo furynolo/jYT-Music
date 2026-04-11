@@ -25,13 +25,14 @@ from ui.now_playing_widget import NowPlayingWidget
 from ui.playlist_header_widget import PlaylistHeaderWidget
 
 class MainWindow(QMainWindow):
-    def __init__(self, settings_manager, shortcut_manager, audio_engine, auth_manager, youtube_api):
+    def __init__(self, settings_manager, shortcut_manager, audio_engine, auth_manager, youtube_api, debug_mode=False):
         super().__init__()
         self.settings_manager = settings_manager
         self.shortcut_manager = shortcut_manager
         self.audio_engine = audio_engine
         self.auth_manager = auth_manager
         self.youtube_api = youtube_api
+        self.debug_mode = debug_mode
         
         self.setWindowTitle("jYT Music Desktop App")
         self.setMinimumWidth(500)
@@ -41,7 +42,7 @@ class MainWindow(QMainWindow):
         # Set Window Icon
         base_dir = os.path.dirname(os.path.abspath(__file__))
         assets_dir = os.path.join(base_dir, "..", "assets")
-        self.setWindowIcon(QIcon(os.path.join(assets_dir, "logo.svg")))
+        self.setWindowIcon(QIcon(os.path.join(assets_dir, "logo.ico")))
         
         self.is_cloud_mode = True
         self.local_files = []
@@ -50,12 +51,36 @@ class MainWindow(QMainWindow):
         self.playlist_worker = None
         self.items_worker = None
         self.search_worker = None
+        self.rating_worker = None
         
         self.queue_manager = QueueManager()
         self.is_slider_being_dragged = False
         
         # Keep track of active image workers to prevent garbage collection
-        self.image_workers = []
+        # Selection debounce to prevent hammering the YouTube API
+        self._selection_debounce_timer = QTimer(self)
+        self._selection_debounce_timer.setSingleShot(True)
+        self._selection_debounce_timer.setInterval(250)
+        self._selection_debounce_timer.timeout.connect(self._execute_debounced_play)
+        self._pending_track_to_play = None
+        
+        # Safe Disposal Queue for background workers to prevent "Destroyed while running" crashes
+        self._worker_disposal_queue = []
+
+        # Batch rendering for large playlists to prevent UI lag
+        self._pending_cloud_tracks = []
+        self._render_timer = QTimer(self)
+        self._render_timer.setInterval(45) # Increased to 45ms for butter-smooth window dragging
+        self._render_timer.timeout.connect(self._process_cloud_render_queue)
+        
+        # Performance optimization: track active item for O(1) updates
+        self.last_active_cloud_item = None
+        self._url_to_item = {} # Map URLs to ListWidgets for O(1) lookup
+        
+        # Image Loading Throttler to prevent "Thread Explosion"
+        self._pending_images = [] # Queue of (url, widget)
+        self._active_image_workers = 0
+        self._MAX_IMAGE_WORKERS = 5 # Limit concurrent image downloads
         
         # Currently selected cloud track
         self.current_cloud_url = None
@@ -108,10 +133,9 @@ class MainWindow(QMainWindow):
             QPushButton { background-color: #444; color: white; border-radius: 4px; padding: 5px 10px; font-weight: bold; }
             QPushButton:hover { background-color: #555; }
         """)
+        self.browse_btn.setFocusPolicy(Qt.NoFocus)
+        self.browse_btn.setFocusPolicy(Qt.NoFocus)
         self.browse_btn.clicked.connect(self.browse_local_folder)
-        self.browse_btn.hide()
-        top_bar_layout.addWidget(self.browse_btn)
-
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search YouTube or Paste URL...")
         self.search_input.setMinimumWidth(350)
@@ -120,6 +144,7 @@ class MainWindow(QMainWindow):
         top_bar_layout.addWidget(self.search_input)
         
         self.action_btn = QPushButton("Play")
+        self.action_btn.setFocusPolicy(Qt.NoFocus) # Avoid key capturing
         self.action_btn.setStyleSheet("""
             QPushButton { background-color: #444; color: white; border-radius: 4px; padding: 5px 15px; font-weight: bold; }
             QPushButton:hover { background-color: #555; }
@@ -128,15 +153,14 @@ class MainWindow(QMainWindow):
         top_bar_layout.addWidget(self.action_btn)
         
         self.download_btn = QPushButton("⬇ Download")
+        self.download_btn.setFocusPolicy(Qt.NoFocus) # Prevent Space bar triggering
         self.download_btn.setStyleSheet("""
             QPushButton { background-color: #444; color: white; border-radius: 4px; padding: 5px 10px; font-weight: bold; }
             QPushButton:hover { background-color: #555; }
         """)
         self.download_btn.clicked.connect(self.on_download_clicked)
         top_bar_layout.addWidget(self.download_btn)
-        
-        top_bar_layout.addSpacerItem(QSpacerItem(20, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
-        
+
         self.login_btn = QPushButton("Log in to Google")
         self.login_btn.setStyleSheet("background-color: #4285F4; color: white; font-weight: bold;")
         self.login_btn.setFocusPolicy(Qt.NoFocus)
@@ -159,6 +183,7 @@ class MainWindow(QMainWindow):
         self.splitter = QSplitter(Qt.Horizontal)
         
         self.sidebar_widget = QListWidget()
+        self.sidebar_widget.setFocusPolicy(Qt.NoFocus) # Prevent key interception
         self.sidebar_widget.setStyleSheet("background-color: #181818; font-size: 14px;")
         self.sidebar_widget.setCursor(Qt.PointingHandCursor)
         self.sidebar_widget.itemClicked.connect(self.on_playlist_selected)
@@ -276,7 +301,7 @@ class MainWindow(QMainWindow):
         self.bottom_left_layout.addWidget(self.play_pause_btn)
         self.bottom_left_layout.addWidget(self.next_btn)
         self.bottom_left_layout.addWidget(self.time_label_combo)
-        self.bottom_left_layout.addStretch()
+        self.bottom_left_layout.addStretch() # Push center widget from the left
         
         # CENTER FLANK
         self.bottom_center_layout = QHBoxLayout()
@@ -328,28 +353,28 @@ class MainWindow(QMainWindow):
         self.bottom_right_layout.addWidget(self.repeat_btn)
         self.bottom_right_layout.addWidget(self.shuffle_btn)
         
-        # Combine flanks
-        # Add stretches so center layout stays strictly in the middle
+        # Combine flanks with high stretch for the center to allow dynamic filling
         bottom_bar_layout.addLayout(self.bottom_left_layout)
-        bottom_bar_layout.addLayout(self.bottom_center_layout, 10) # Overwhelming stretch priority
+        bottom_bar_layout.addLayout(self.bottom_center_layout, 10)
         bottom_bar_layout.addLayout(self.bottom_right_layout)
         
         main_layout.addLayout(bottom_bar_layout)
 
     def init_bindings(self):
-        self.shortcut_manager.hotkey_triggered.connect(self.on_hotkey_triggered)
+        # Use UniqueConnection to prevent duplicate fires when reloading settings
+        self.shortcut_manager.hotkey_triggered.connect(self.on_hotkey_triggered, Qt.UniqueConnection)
         self.shortcut_manager.start()
         
         # Audio Engine signals
-        self.audio_engine.playback_state_changed.connect(self.on_playback_state_changed)
-        self.audio_engine.track_finished.connect(self.on_track_finished)
-        self.audio_engine.position_updated.connect(self.on_position_updated)
-        self.audio_engine.duration_updated.connect(self.on_duration_updated)
-        self.audio_engine.error_occurred.connect(self.on_audio_error)
+        self.audio_engine.playback_state_changed.connect(self.on_playback_state_changed, Qt.UniqueConnection)
+        self.audio_engine.track_finished.connect(self.on_track_finished, Qt.UniqueConnection)
+        self.audio_engine.position_updated.connect(self.on_position_updated, Qt.UniqueConnection)
+        self.audio_engine.duration_updated.connect(self.on_duration_updated, Qt.UniqueConnection)
+        self.audio_engine.error_occurred.connect(self.on_audio_error, Qt.UniqueConnection)
         
-        self.progress_slider.sliderPressed.connect(self.on_slider_pressed)
-        self.progress_slider.sliderReleased.connect(self.on_slider_released)
-        self.progress_slider.sliderMoved.connect(self.on_slider_moved)
+        self.progress_slider.sliderPressed.connect(self.on_slider_pressed, Qt.UniqueConnection)
+        self.progress_slider.sliderReleased.connect(self.on_slider_released, Qt.UniqueConnection)
+        self.progress_slider.sliderMoved.connect(self.on_slider_moved, Qt.UniqueConnection)
 
     def toggle_volume_popup(self):
         import time
@@ -381,6 +406,7 @@ class MainWindow(QMainWindow):
             self.cloud_status.setText("Log in to see your playlists.")
 
     def open_settings(self):
+        if self.debug_mode: print("[DEBUG] UI Action: Click -> OPEN_SETTINGS")
         dialog = SettingsDialog(self.settings_manager, self.is_cloud_mode, self)
         dialog.logout_requested.connect(self.on_logout_clicked)
         dialog.mode_toggled.connect(self.on_mode_toggled)
@@ -389,6 +415,7 @@ class MainWindow(QMainWindow):
             self.flash_status("Settings saved. Shortcuts reloaded.")
 
     def on_login_clicked(self):
+        if self.debug_mode: print("[DEBUG] UI Action: Click -> LOGIN_GOOGLE")
         try:
             success = self.auth_manager.login()
             if success:
@@ -398,6 +425,7 @@ class MainWindow(QMainWindow):
             self.flash_status(f"Login failed: {e}", color="#ff5555")
 
     def on_logout_clicked(self):
+        if self.debug_mode: print("[DEBUG] UI Action: Click -> LOGOUT")
         self.auth_manager.logout()
         self.flash_status("Logged out successfully.")
         self.update_auth_ui()
@@ -423,6 +451,9 @@ class MainWindow(QMainWindow):
 
     def on_playlist_selected(self, item):
         playlist_id = item.data(Qt.UserRole)
+        if self.debug_mode: print(f"[DEBUG] UI Action: Playlist Selected (Title: '{item.text()}', ID: '{playlist_id}')")
+        
+        self.stacked_widget.setCurrentIndex(0)
         
         # Pull rich payload from cache
         payload = next((p for p in self._cached_playlists if p['id'] == playlist_id), None)
@@ -440,7 +471,19 @@ class MainWindow(QMainWindow):
         self.cloud_status.show()
         self.cloud_list_widget.hide()
         
+        # 1. Terminate previous loader if it's still running to prevent "Ghost Tracks"
+        if self.items_worker and self.items_worker.isRunning():
+            self.items_worker.terminate()
+            self.items_worker.wait()
+            
         self.image_workers = [] # Clear old workers
+        self._pending_cloud_tracks.clear()
+        self._render_timer.stop()
+        self._url_to_item.clear()
+        self.last_active_cloud_item = None
+        self._pending_images.clear()
+        self._active_image_workers = 0
+        
         self._current_playlist_total_seconds = 0
         self._current_playlist_track_count = 0
 
@@ -451,29 +494,18 @@ class MainWindow(QMainWindow):
         self.items_worker.start()
 
     def on_playlist_chunk_loaded(self, tracks):
-        # Show list if we have at least one chunk
-        if self.cloud_status.isVisible():
-            self.cloud_status.hide()
-            self.cloud_list_widget.show()
+        # Accumulate tracks for iterative rendering
+        self._pending_cloud_tracks.extend(tracks)
+        
+        # Start the "waterfall" rendering if not already running
+        if not self._render_timer.isActive():
+            self._render_timer.start()
             
+        # Update running duration/counts (fast operation)
         for track in tracks:
             self._current_playlist_total_seconds += parse_duration_to_seconds(track.get('duration', '0:00'))
             self._current_playlist_track_count += 1
             
-            list_item = QListWidgetItem(self.cloud_list_widget)
-            list_item.setData(Qt.UserRole, track)
-            
-            widget = TrackItemWidget(track)
-            list_item.setSizeHint(widget.sizeHint())
-            self.cloud_list_widget.setItemWidget(list_item, widget)
-            
-            thumb_url = track.get("thumbnail_url")
-            if thumb_url:
-                worker = ImageWorker(thumb_url, parent=self)
-                worker.image_ready.connect(lambda p, _, w=widget: w.set_thumbnail(p))
-                worker.start()
-                self.image_workers.append(worker)
-                
         # Live-update header metadata with running totals
         from utils.duration_utils import format_seconds_to_human
         duration_str = format_seconds_to_human(self._current_playlist_total_seconds)
@@ -485,16 +517,95 @@ class MainWindow(QMainWindow):
             duration_str=duration_str
         )
 
+    def _process_cloud_render_queue(self):
+        """Processes a batch of pending tracks to keep the UI responsive."""
+        if not self._pending_cloud_tracks:
+            self._render_timer.stop()
+            return
+
+        # Show list if it was hidden
+        if self.cloud_status.isVisible():
+            self.cloud_status.hide()
+            self.cloud_list_widget.show()
+
+        # Build a thin batch (6 items per 45ms = smooth as butter)
+        BATCH_SIZE = 6
+        batch = self._pending_cloud_tracks[:BATCH_SIZE]
+        self._pending_cloud_tracks = self._pending_cloud_tracks[BATCH_SIZE:]
+
+        for track in batch:
+            track_url = track.get("url")
+            list_item = QListWidgetItem(self.cloud_list_widget)
+            list_item.setData(Qt.UserRole, track)
+            
+            # Store in map for O(1) UI syncing later
+            if track_url:
+                self._url_to_item[track_url] = list_item
+            
+            widget = TrackItemWidget(track)
+            list_item.setSizeHint(widget.sizeHint())
+            self.cloud_list_widget.setItemWidget(list_item, widget)
+            
+            thumb_url = track.get("thumbnail_url")
+            if thumb_url:
+                # Add to throttled image queue instead of starting immediately
+                self._pending_images.append((thumb_url, widget))
+        
+        # Kick off image processing if not full
+        self._process_image_queue()
+
+        # Update status if still loading
+        if self._pending_cloud_tracks:
+            self.flash_status(f"Loading tracks... ({self.cloud_list_widget.count()} loaded)", color="#aaa")
+        else:
+            self.flash_status(f"Fully loaded {self.cloud_list_widget.count()} tracks.", color="#4285F4")
+
+    def _process_image_queue(self):
+        """Processes the throttled image queue."""
+        if not self._pending_images or self._active_image_workers >= self._MAX_IMAGE_WORKERS:
+            return
+            
+        while self._pending_images and self._active_image_workers < self._MAX_IMAGE_WORKERS:
+            url, widget = self._pending_images.pop(0)
+            
+            worker = ImageWorker(url, parent=self)
+            self._active_image_workers += 1
+            
+            # Connect cleanup with safety check to prevent libshiboken "already deleted" crashes
+            def set_thumbnail_safe(pixmap, _, w=widget):
+                try:
+                    # Check if the widget hasn't been garbage collected or deleted by Qt
+                    if w and not w.isHidden(): # Simple proxy for "is this still in a list?"
+                        w.set_thumbnail(pixmap)
+                except RuntimeError:
+                    # Widget was already deleted, ignore safely
+                    pass
+
+            worker.image_ready.connect(set_thumbnail_safe)
+            worker.finished.connect(self._on_image_worker_finished)
+            
+            worker.start()
+            self.image_workers.append(worker)
+
+    def _on_image_worker_finished(self):
+        self._active_image_workers -= 1
+        # Continue processing the queue
+        self._process_image_queue()
+
     def on_playlist_items_loaded(self, all_tracks):
         # Final cleanup or status update when whole playlist is fetched
         self.flash_status(f"Fully loaded {len(all_tracks)} tracks.", color="#4285F4")
 
     def on_play_all_clicked(self):
+        if self.debug_mode: print("[DEBUG] UI Action: Click -> PLAY_ALL")
         if self.cloud_list_widget.count() > 0:
             first_item = self.cloud_list_widget.item(0)
             self.on_cloud_track_selected(first_item)
 
     def on_cloud_track_selected(self, item):
+        track_data = item.data(Qt.UserRole)
+        if self.debug_mode: print(f"[DEBUG] UI Action: Track Selected (Title: '{track_data.get('title')}', ID: '{track_data.get('id')}')")
+        
         tracks = []
         for i in range(self.cloud_list_widget.count()):
             w = self.cloud_list_widget.item(i)
@@ -506,7 +617,7 @@ class MainWindow(QMainWindow):
             
         self.queue_manager.load_queue(tracks)
         
-        clicked_track = item.data(Qt.UserRole)
+        clicked_track = track_data
         if hasattr(clicked_track, 'copy'):
             clicked_track = clicked_track.copy()
         clicked_track["type"] = "cloud"
@@ -537,30 +648,72 @@ class MainWindow(QMainWindow):
                 thumbnail_url=track.get("thumbnail_url")
             )
             self.now_playing_widget.set_rating("none") # Standardize for new tracks
+            
+            # --- VISUAL RESET: Clear "ghost" progress from previous track ---
+            self.progress_slider.setValue(0)
+            self._current_pos_ms = 0
+            self._duration_ms = 0
+            self.update_time_combo(0, 0)
             self.current_cloud_url = track.get("url", "")
             
-            # Sync active state down to track widgets
-            for i in range(self.cloud_list_widget.count()):
-                item = self.cloud_list_widget.item(i)
-                widget = self.cloud_list_widget.itemWidget(item)
-                if widget:
-                    is_this_active = (widget.track_data.get("url") == self.current_cloud_url)
-                    widget.set_active(is_this_active)
-                    if is_this_active:
-                        widget.set_playing(self.audio_engine.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState)
-                        # Auto-Scroll to center the playing track
-                        self.cloud_list_widget.scrollToItem(item, QListWidget.PositionAtCenter)
+            # --- DEBOUNCE LOGIC ---
+            # Instead of starting extraction immediately, we buffer the track 
+            # and wait 250ms. If you click again, this timer resets.
+            self._pending_track_to_play = track
+            self._selection_debounce_timer.start()
             
-            self.yt_worker = YTWorker(self.current_cloud_url, parent=self)
-            self.yt_worker.result_ready.connect(self.on_yt_result_ready)
-            self.yt_worker.error_occurred.connect(self.on_yt_error)
-            self.yt_worker.start()
+    def _execute_debounced_play(self):
+        track = self._pending_track_to_play
+        if not track or track.get("type") != "cloud":
+            return
             
-            # Auto-fetch rating if authenticated
-            if self.current_cloud_video_id and self.auth_manager.is_authenticated():
-                self.rating_worker = RatingFetchWorker(self.youtube_api, self.current_cloud_video_id, self)
-                self.rating_worker.rating_fetched.connect(self.on_rating_fetched)
-                self.rating_worker.start()
+        url = track.get("url")
+        if not url: return
+
+        self.action_btn.setEnabled(False)
+        self.flash_status(f"Extracting Stream: {track.get('title', '...')}")
+
+        # PREEMPTIVE CLEANUP: Offload old workers to disposal queue
+        for worker_name in ["yt_worker", "rating_worker"]:
+            old_worker = getattr(self, worker_name, None)
+            if old_worker and old_worker.isRunning():
+                try: old_worker.disconnect() # Cut off communication
+                except: pass
+                old_worker.terminate() # Fire the stop signal
+                self._worker_disposal_queue.append(old_worker) # Keep alive until naturally reaped
+                setattr(self, worker_name, None) # Clear reference for new choice
+
+        # Optional: Reap fully finished workers from disposal
+        self._worker_disposal_queue = [w for w in self._worker_disposal_queue if w.isRunning()]
+
+        self.yt_worker = YTWorker(url, parent=self)
+        self.yt_worker.result_ready.connect(self.on_yt_result_ready, Qt.UniqueConnection)
+        self.yt_worker.error_occurred.connect(self.on_yt_error, Qt.UniqueConnection)
+        self.yt_worker.start()
+
+        # Fetch rating organically
+        if self.auth_manager.is_authenticated() and self.current_cloud_video_id:
+            self.rating_worker = RatingFetchWorker(self.youtube_api, self.current_cloud_video_id, self)
+            self.rating_worker.rating_fetched.connect(self.on_rating_fetched, Qt.UniqueConnection)
+            self.rating_worker.start()
+            
+        # PERFORMANCE FIX: O(1) Sync active state
+        # 1. Deactivate old item
+        if self.last_active_cloud_item:
+            old_widget = self.cloud_list_widget.itemWidget(self.last_active_cloud_item)
+            if old_widget:
+                old_widget.set_active(False)
+        
+        # 2. Activate new item using our O(1) map
+        new_item = self._url_to_item.get(self.current_cloud_url)
+        if new_item:
+            new_widget = self.cloud_list_widget.itemWidget(new_item)
+            if new_widget:
+                new_widget.set_active(True)
+                new_widget.set_playing(self.audio_engine.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState)
+                # Auto-Scroll to center the playing track
+                self.cloud_list_widget.scrollToItem(new_item, QListWidget.PositionAtCenter)
+            self.last_active_cloud_item = new_item
             
         elif track["type"] == "local":
             self.audio_engine.play_file(track["path"])
@@ -590,6 +743,7 @@ class MainWindow(QMainWindow):
                     item.setSelected(False)
 
     def on_prev_clicked(self):
+        if self.debug_mode: print("[DEBUG] UI Action: Click -> PREV_TRACK")
         current_pos = self.progress_slider.value()
         total_duration = self.progress_slider.maximum()
         
@@ -609,6 +763,7 @@ class MainWindow(QMainWindow):
             self.audio_engine.seek(0)
             
     def on_next_clicked(self):
+        if self.debug_mode: print("[DEBUG] UI Action: Click -> NEXT_TRACK")
         track = self.queue_manager.next_track(manual_skip=True)
         if track:
             self._play_track_object(track)
@@ -616,11 +771,33 @@ class MainWindow(QMainWindow):
             self.flash_status("End of queue.")
 
     def on_track_finished(self):
+        # --- COMPLETION GUARD ---
+        current_pos = self.progress_slider.value()
+        total_duration = self.progress_slider.maximum()
+        
+        # 3-SECOND RULE: Physically ignore ANY finish signal if the song hasn't 
+        # been playing for at least 3 seconds. This kills phantom skips during buffering.
+        if current_pos < 3000:
+            if self.debug_mode: print(f"[DEBUG] Completion Guard: BLOCKED signal (Pos: {current_pos}ms < 3s)")
+            return
+
+        # If we're more than 2 seconds away from the end, this was likely a manual stop/flush
+        if total_duration > 0 and (total_duration - current_pos) > 2000:
+            if self.debug_mode: print(f"[DEBUG] Completion Guard: BLOCKED signal (Manual Trigger? Pos: {current_pos}, End: {total_duration})")
+            return
+            
+        if self.debug_mode: print("[DEBUG] Completion Guard: Signal ALLOWED. Advancing to next track.")
+            
         track = self.queue_manager.next_track()
         if track:
             self._play_track_object(track)
 
+    def on_play_pause_clicked(self):
+        if self.debug_mode: print("[DEBUG] UI Action: Click -> PLAY_PAUSE")
+        self.audio_engine.toggle_play_pause()
+
     def on_shuffle_play_clicked(self):
+        if self.debug_mode: print("[DEBUG] UI Action: Click -> SHUFFLE_PLAY")
         if not self.queue_manager.shuffle:
             self.on_shuffle_toggled()
             
@@ -641,6 +818,7 @@ class MainWindow(QMainWindow):
             
     def on_shuffle_toggled(self):
         is_shuffled = not self.queue_manager.shuffle
+        if self.debug_mode: print(f"[DEBUG] UI Action: Toggle -> SHUFFLE_MODE (New State: {is_shuffled})")
         self.queue_manager.set_shuffle(is_shuffled)
         
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -662,6 +840,7 @@ class MainWindow(QMainWindow):
         else:
             new_mode = "off"
             
+        if self.debug_mode: print(f"[DEBUG] UI Action: Toggle -> REPEAT_MODE (New State: {new_mode})")
         self.queue_manager.set_repeat_mode(new_mode)
         
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -681,6 +860,7 @@ class MainWindow(QMainWindow):
             self.repeat_btn.setText("")
 
     def on_volume_changed(self, value):
+        if self.debug_mode: print(f"[DEBUG] UI Action: Volume Changed ({value})")
         volume_level = value / 100.0
         self.audio_engine.set_volume(volume_level)
         self.settings_manager.settings["volume_level"] = value
@@ -711,6 +891,7 @@ class MainWindow(QMainWindow):
     def on_slider_released(self):
         self.is_slider_being_dragged = False
         position_ms = self.progress_slider.value()
+        if self.debug_mode: print(f"[DEBUG] UI Action: Slider Seek ({position_ms})")
         self.audio_engine.seek(position_ms)
         
     def on_slider_moved(self, position):
@@ -732,6 +913,8 @@ class MainWindow(QMainWindow):
         query = self.search_input.text().strip()
         if not query:
             return
+        
+        if self.debug_mode: print(f"[DEBUG] UI Action: Search Triggered ('{query}')")
 
         # Hide playlist stuff while searching
         self.cloud_list_widget.hide()
@@ -803,6 +986,7 @@ class MainWindow(QMainWindow):
             self.flash_status(f"Artist search for {data['title']} - Playlist listing not yet implemented.")
 
     def on_rate_clicked(self, rating):
+        if self.debug_mode: print(f"[DEBUG] UI Action: Click -> RATE_VIDEO ({rating})")
         if not self.auth_manager.is_authenticated() or not self.current_cloud_video_id:
             self.flash_status("Please login and play a cloud track to rate it.", "#ff5555")
             return
@@ -853,6 +1037,7 @@ class MainWindow(QMainWindow):
         self.cloud_status.setStyleSheet("font-size: 16px; color: #ff5555; font-weight: bold;")
 
     def on_download_clicked(self, target_url=None):
+        if self.debug_mode: print("[DEBUG] UI Action: Click -> DOWNLOAD_TRACK")
         if not target_url or isinstance(target_url, bool):
             target_url = self.current_cloud_url
             
@@ -919,13 +1104,17 @@ class MainWindow(QMainWindow):
             
         self.recovery_retry_count += 1
         
-        # Restart YT extraction
-        if self.yt_worker:
+        # PREEMPTIVE CLEANUP: Ensure no crossover between recovery workers
+        if self.yt_worker and self.yt_worker.isRunning():
+            try: self.yt_worker.disconnect() 
+            except: pass
             self.yt_worker.terminate()
+            self.yt_worker.wait(300) # Short wait for extraction processes
             
+        print(f"Executing recovery attempt {self.recovery_retry_count}...")
         self.yt_worker = YTWorker(self.current_cloud_url, parent=self)
-        self.yt_worker.result_ready.connect(self.on_recovery_result_ready)
-        self.yt_worker.error_occurred.connect(self.on_recovery_error)
+        self.yt_worker.result_ready.connect(self.on_recovery_result_ready, Qt.UniqueConnection)
+        self.yt_worker.error_occurred.connect(self.on_recovery_error, Qt.UniqueConnection)
         self.yt_worker.start()
 
     def on_recovery_result_ready(self, track_info):
@@ -955,6 +1144,7 @@ class MainWindow(QMainWindow):
             self.recovery_retry_count = 0
 
     def show_now_playing_menu(self):
+        if self.debug_mode: print("[DEBUG] UI Action: Click -> NOW_PLAYING_MENU")
         if not self.current_cloud_url:
             return
             
@@ -977,6 +1167,7 @@ class MainWindow(QMainWindow):
         menu.exec(btn_pos)
 
     def show_cloud_context_menu(self, pos):
+        if self.debug_mode: print("[DEBUG] UI Action: Context Menu -> CLOUD_LIST")
         item = self.cloud_list_widget.itemAt(pos)
         if not item:
             return
@@ -1013,6 +1204,7 @@ class MainWindow(QMainWindow):
         menu.exec(self.cloud_list_widget.viewport().mapToGlobal(pos))
         
     def show_local_context_menu(self, pos):
+        if self.debug_mode: print("[DEBUG] UI Action: Context Menu -> LOCAL_LIST")
         item = self.local_list_widget.itemAt(pos)
         if not item:
             return
@@ -1045,6 +1237,7 @@ class MainWindow(QMainWindow):
         menu.exec(self.local_list_widget.viewport().mapToGlobal(pos))
 
     def browse_local_folder(self):
+        if self.debug_mode: print("[DEBUG] UI Action: Click -> BROWSE_LOCAL")
         default_dir = self.settings_manager.settings.get("download_dir", "")
         if not default_dir:
             default_dir = self.settings_manager.settings.get("local_music_dir", "")
@@ -1090,8 +1283,9 @@ class MainWindow(QMainWindow):
             self._play_track_object(clicked_track)
 
     def on_hotkey_triggered(self, action):
+        if self.debug_mode: print(f"[DEBUG] Window Callback: on_hotkey_triggered('{action}')")
         if action == "play_pause":
-            self.audio_engine.toggle_play_pause()
+            self.on_play_pause_clicked()
         elif action == "next_track":
             self.on_next_clicked()
         elif action == "prev_track":
@@ -1144,7 +1338,38 @@ class MainWindow(QMainWindow):
                     self.scan_and_load_local(saved_dir)
 
     def closeEvent(self, event):
+        # 1. Save Settings
         self.settings_manager.save()
+        
+        # 2. Stop Audio & Hotkeys
         self.audio_engine.stop()
-        self.shortcut_manager.stop()
+        if hasattr(self, 'shortcut_manager'):
+            self.shortcut_manager.stop()
+        
+        # 3. Stop Batch Rendering
+        self._render_timer.stop()
+        self._pending_cloud_tracks.clear()
+        self._pending_images.clear()
+        self._selection_debounce_timer.stop()
+        
+        # 4. Nuclear Cleanup (Immediate Shutdown)
+        # We NO LONGER wait() for threads in closeEvent. 
+        # Waiting for blocked ffmpeg/yt-dlp threads is what causes the X button hang.
+        workers_to_stop = [
+            self.yt_worker, 
+            self.download_worker, 
+            self.playlist_worker, 
+            self.items_worker, 
+            self.search_worker,
+            self.rating_worker
+        ]
+        for worker in workers_to_stop:
+            if worker and worker.isRunning():
+                try: worker.disconnect()
+                except: pass
+                worker.terminate()
+        
+        # 5. Final Atomic Exit
         super().closeEvent(event)
+        import os
+        os._exit(0)

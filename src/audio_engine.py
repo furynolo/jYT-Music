@@ -10,8 +10,9 @@ class AudioEngine(QObject):
     track_finished = Signal()
     error_occurred = Signal(int, str) # error_code, error_message
 
-    def __init__(self):
+    def __init__(self, debug_mode=False):
         super().__init__()
+        self.debug_mode = debug_mode
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
         
@@ -21,6 +22,7 @@ class AudioEngine(QObject):
         # Defaults
         self.audio_output.setVolume(0.8)
         self.current_track_path = None
+        self._ignore_finish_signal = False # Sticky flag to prevent phantom skips
 
         # Ticking timer for progress
         self.timer = QTimer(self)
@@ -34,9 +36,25 @@ class AudioEngine(QObject):
         self.player.errorOccurred.connect(self._on_error_occurred)
 
     def play_file(self, source_path):
-        """Play an arbitrary local file."""
+        """Play an arbitrary local file or URL."""
+        if self.debug_mode: print(f"[DEBUG] AudioEngine: play_file('{source_path}')")
+        # --- HARD RESET PROTOCOL ---
+        # 1. Set sticky flag to ignore any phantom finish signals during reset
+        self._ignore_finish_signal = True
+        
+        # 2. Stop playback
+        self.player.stop()
+        # 3. CLEAR the source to flush FFmpeg network buffers instantly
+        self.player.setSource(QUrl())
+        
         self.current_track_path = source_path
-        self.player.setSource(QUrl.fromLocalFile(source_path))
+        
+        # Determine if it's a URL or a file
+        if source_path.startswith("http"):
+            self.player.setSource(QUrl(source_path))
+        else:
+            self.player.setSource(QUrl.fromLocalFile(source_path))
+            
         self.player.play()
         self.track_changed.emit(source_path)
 
@@ -51,7 +69,9 @@ class AudioEngine(QObject):
             self.player.pause()
 
     def stop(self):
+        self._ignore_finish_signal = True
         self.player.stop()
+        self.player.setSource(QUrl())
 
     def toggle_play_pause(self):
         """Toggle state. Used primarily by hotkeys."""
@@ -80,8 +100,20 @@ class AudioEngine(QObject):
         self.playback_state_changed.emit(is_playing)
 
     def _on_media_status_changed(self, status):
+        if self.debug_mode: print(f"[DEBUG] AudioEngine: MediaStatus -> {status}")
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
-            self.track_finished.emit()
+            if self.debug_mode: print(f"[DEBUG] AudioEngine: EndOfMedia reached. Signal Silenced? {self._ignore_finish_signal}")
+            if not self._ignore_finish_signal:
+                # Double Guard: Only emit if position is actually at the end
+                if self.player.duration() > 0 and abs(self.player.position() - self.player.duration()) < 2000:
+                    self.track_finished.emit()
+            
+            # Auto-reset flag once we've handled the signal
+            self._ignore_finish_signal = False
+            
+        elif status == QMediaPlayer.MediaStatus.NoMedia:
+            # We explicitly clear the flag when media is removed
+            self._ignore_finish_signal = False
 
     def _on_timer_tick(self):
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
