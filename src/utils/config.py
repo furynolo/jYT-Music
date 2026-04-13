@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import shutil
 from dotenv import load_dotenv
 
 def get_resource_path(relative_path):
@@ -26,7 +27,19 @@ def get_user_data_path(filename):
     if not os.path.exists(base_path):
         os.makedirs(base_path)
     
-    return os.path.join(base_path, filename)
+    target_path = os.path.join(base_path, filename)
+
+    # --- MIGRATION LOGIC ---
+    # If the file exists in the LOCAL directory but NOT in AppData, move it.
+    local_path = get_resource_path(filename)
+    if os.path.exists(local_path) and not os.path.exists(target_path):
+        try:
+            shutil.copy2(local_path, target_path)
+            print(f"Migrated {filename} to {target_path}")
+        except Exception as e:
+            print(f"Failed to migrate {filename}: {e}")
+
+    return target_path
 
 # Load environment variables from .env file
 load_dotenv()

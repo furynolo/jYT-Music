@@ -1103,15 +1103,54 @@ class MainWindow(QMainWindow):
             return
             
         self.recovery_retry_count += 1
+        print(f"Executing recovery attempt {self.recovery_retry_count}...")
+
+        # --- SOFT RECOVERY (NUDGE) ---
+        # On the first attempt, we try a simple seek nudge as suggested by user.
+        # This often fixes buffer stalls without needing a full re-extraction.
+        if self.recovery_retry_count == 1:
+            self.execute_soft_recovery()
+        else:
+            self.execute_hard_recovery()
+
+    def execute_soft_recovery(self):
+        print("Soft recovery: Attempting to nudge player with small seek...")
+        current_pos = self.audio_engine.player.position()
         
+        # We nudge forward by 1 second (or stay at current if at end)
+        # 1 second is enough to force most decoders to re-sync.
+        nudge_pos = current_pos + 1000 
+        
+        self.audio_engine.seek(nudge_pos)
+        self.audio_engine.player.play()
+        
+        # Check back in 1.5 seconds to see if position has advanced
+        QTimer.singleShot(1500, self.check_soft_recovery_success)
+
+    def check_soft_recovery_success(self):
+        if not self.recovery_mode: return
+        
+        current_pos = self.audio_engine.player.position()
+        # If position has moved since our last check, we consider it recovered
+        if current_pos > self.last_failure_pos + 500: # 500ms margin
+            print("Soft recovery successful! Playback resumed.")
+            self.recovery_mode = False
+            self.recovery_retry_count = 0
+            self.flash_status("Playback recovered (Nudged)!", "#1ed760")
+        else:
+            print("Soft recovery failed to resume playback. Moving to hard recovery.")
+            # Trigger the next attempt immediately (which will be a hard recovery)
+            self.execute_hard_recovery()
+
+    def execute_hard_recovery(self):
         # PREEMPTIVE CLEANUP: Ensure no crossover between recovery workers
         if self.yt_worker and self.yt_worker.isRunning():
             try: self.yt_worker.disconnect() 
             except: pass
             self.yt_worker.terminate()
-            self.yt_worker.wait(300) # Short wait for extraction processes
+            self.yt_worker.wait(300) 
             
-        print(f"Executing recovery attempt {self.recovery_retry_count}...")
+        print(f"Executing hard recovery (re-extraction) for: {self.current_cloud_url}")
         self.yt_worker = YTWorker(self.current_cloud_url, parent=self)
         self.yt_worker.result_ready.connect(self.on_recovery_result_ready, Qt.UniqueConnection)
         self.yt_worker.error_occurred.connect(self.on_recovery_error, Qt.UniqueConnection)
@@ -1122,7 +1161,11 @@ class MainWindow(QMainWindow):
         self.recovery_mode = False
         self.recovery_retry_count = 0
         
-        stream_url = track_info['stream_url']
+        stream_url = track_info.get('url')
+        if not stream_url:
+            self.on_recovery_error("No stream URL in recovered track info.")
+            return
+            
         self.audio_engine.player.setSource(QUrl(stream_url))
         self.audio_engine.player.play()
         
